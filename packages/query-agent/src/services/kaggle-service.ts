@@ -26,7 +26,7 @@ export class KaggleService {
 function runKaggleCommand(args: string[]): Promise<string> {
   const env = resolveKaggleEnvironment();
   assertKaggleCredentials(env);
-  return runCommand("kaggle", args, env);
+  return runKaggleWithFallback(args, env);
 }
 
 function runCommand(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
@@ -84,4 +84,40 @@ function assertKaggleCredentials(env: NodeJS.ProcessEnv): void {
       "Kaggle credentials are missing. Set KAGGLE_USERNAME and KAGGLE_KEY (or KAGGLE_API_TOKEN) in .env, or create .kaggle/kaggle.json.",
     );
   }
+}
+
+async function runKaggleWithFallback(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
+  const localUserKaggle = join(homedir(), "Library", "Python");
+  const candidateCommands: Array<{ command: string; argsPrefix: string[] }> = [
+    ...(env.KAGGLE_BIN ? [{ command: env.KAGGLE_BIN, argsPrefix: [] }] : []),
+    { command: "kaggle", argsPrefix: [] },
+    { command: join(localUserKaggle, "3.12", "bin", "kaggle"), argsPrefix: [] },
+    { command: join(localUserKaggle, "3.11", "bin", "kaggle"), argsPrefix: [] },
+    { command: "python3", argsPrefix: ["-m", "kaggle"] },
+  ];
+
+  let lastFailure: Error | undefined;
+
+  for (const candidate of candidateCommands) {
+    // Skip explicit file candidates that do not exist.
+    if (candidate.command.includes("/") && !existsSync(candidate.command)) {
+      continue;
+    }
+
+    try {
+      return await runCommand(candidate.command, [...candidate.argsPrefix, ...args], env);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const notFound = /ENOENT|Failed to execute/.test(message);
+      if (!notFound) {
+        throw error;
+      }
+      lastFailure = error instanceof Error ? error : new Error(message);
+    }
+  }
+
+  throw (
+    lastFailure ??
+    new Error("Unable to execute Kaggle CLI. Install it or set KAGGLE_BIN to the kaggle executable path.")
+  );
 }

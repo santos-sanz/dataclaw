@@ -46,10 +46,16 @@ export class Planner {
       2,
     );
 
-    const plan = await this.client.chatJson<PlannerOutput>([
-      { role: "system", content: PLANNER_SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
-    ]);
+    let plan: PlannerOutput;
+    try {
+      plan = await this.client.chatJson<PlannerOutput>([
+        { role: "system", content: PLANNER_SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ]);
+    } catch {
+      // Keep the runtime resilient if the model returns non-JSON output.
+      return heuristicPlan(context.prompt);
+    }
 
     if (plan.language === "sql" && plan.requiresApproval === false && isMutatingSql(plan.command)) {
       plan.requiresApproval = true;

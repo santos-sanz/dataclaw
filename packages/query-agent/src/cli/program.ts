@@ -70,11 +70,19 @@ export function createProgram(cwd: string = process.cwd()): Command {
   program
     .command("ask")
     .description("Ask a question against a specific dataset")
-    .requiredOption("--dataset <datasetId>", "Local dataset id")
-    .requiredOption("--prompt <prompt>", "Question to execute")
+    .option("--dataset <datasetId>", "Local dataset id")
+    .option("--prompt <prompt>", "Question to execute")
     .option("--yolo", "Bypass approval gate", false)
-    .action(async (opts: { dataset: string; prompt: string; yolo: boolean }) => {
-      const result = await askService.ask(opts.dataset, opts.prompt, Boolean(opts.yolo));
+    .action(async (opts: { dataset?: string; prompt?: string; yolo: boolean }) => {
+      const globalOpts = program.opts<{ dataset?: string; prompt?: string; yolo?: boolean }>();
+      const dataset = opts.dataset ?? globalOpts.dataset;
+      const prompt = opts.prompt ?? globalOpts.prompt;
+
+      if (!dataset || !prompt) {
+        throw new Error("ask requires --dataset <datasetId> and --prompt <prompt>");
+      }
+
+      const result = await askService.ask(dataset, prompt, Boolean(opts.yolo));
       console.log(renderAskResult(result));
     });
 
