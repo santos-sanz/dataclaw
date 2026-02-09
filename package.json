@@ -1,0 +1,22 @@
+{
+  "name": "dataclaw",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DataClaw monorepo",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean && npm run -ws clean",
+    "typecheck": "tsc -b --pretty false",
+    "test": "npm run build && npm run -ws test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

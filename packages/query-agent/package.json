@@ -1,0 +1,25 @@
+{
+  "name": "@dataclaw/query-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "dataclaw": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b && chmod +x dist/cli.js",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "typecheck": "tsc -b --pretty false",
+    "test": "node --test dist/services/memory-service.test.js"
+  },
+  "dependencies": {
+    "@dataclaw/agent-core": "0.1.0",
+    "@dataclaw/ai": "0.1.0",
+    "@dataclaw/shared": "0.1.0",
+    "@dataclaw/tui": "0.1.0",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "duckdb": "^1.1.3"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@dataclaw/agent-core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "typecheck": "tsc -b --pretty false",
+    "test": "node --test dist/security.test.js"
+  },
+  "dependencies": {
+    "@dataclaw/ai": "0.1.0",
+    "@dataclaw/shared": "0.1.0"
+  }
+}

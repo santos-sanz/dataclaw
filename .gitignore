@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.template
+.kaggle/kaggle.json
+.kaggle/access_token
+.dataclaw/
+!.dataclaw/.gitkeep
+
+*.tsbuildinfo
