@@ -14,6 +14,7 @@ Query agent for Kaggle datasets with SQL execution on DuckDB and Python fallback
 
 - [1. Requirements](#1-requirements)
 - [2. Download and installation (step by step)](#2-download-and-installation-step-by-step)
+- [Launch modes (CLI and Terminal UI)](#launch-modes-cli-and-terminal-ui)
 - [3. First complete workflow (5-10 minutes)](#3-first-complete-workflow-5-10-minutes)
 - [4. Command guide with many examples](#4-command-guide-with-many-examples)
 - [5. Interactive mode](#5-interactive-mode)
@@ -100,6 +101,34 @@ npm exec dataclaw -- --help
 ```
 
 If help is printed, you are ready to use DataClaw.
+
+## Launch modes (CLI and Terminal UI)
+
+Use one-shot mode when you already know the prompt:
+
+```bash
+npm exec dataclaw -- --dataset heptapod_titanic -p "Count rows by Survived"
+```
+
+Use JSON output when integrating with scripts:
+
+```bash
+npm exec dataclaw -- --dataset heptapod_titanic -p "Count rows by Survived" --json
+```
+
+Launch Terminal UI (interactive REPL):
+
+```bash
+npm exec dataclaw --
+```
+
+Inside Terminal UI, use:
+
+- `/datasets` to list local datasets
+- `/dataset <id>` to set active dataset
+- `/yolo on|off` to toggle approval bypass
+- `/help` to view all commands
+- `/exit` to close the session
 
 ## 3. First complete workflow (5-10 minutes)
 
@@ -372,7 +401,7 @@ For better results, set `OPENROUTER_API_KEY` in `.env`.
 
 ## 8. Additional docs
 
-- Advanced recipes and examples: [`docs/CLI_COOKBOOK.md`](docs/CLI_COOKBOOK.md)
+- Advanced recipes, launch patterns, and Terminal UI walkthrough: [`docs/CLI_COOKBOOK.md`](docs/CLI_COOKBOOK.md)
 - Monorepo architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 ## 9. Monorepo development

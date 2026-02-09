@@ -9,6 +9,36 @@ DC="npm exec dataclaw --"
 DATASET=heptapod_titanic
 ```
 
+## 0) Install and launch quick reference
+
+Install and build:
+
+```bash
+git clone <REPO_URL>
+cd dataclaw
+npm install
+npm run build
+cp .env.template .env
+```
+
+Launch in one-shot CLI mode:
+
+```bash
+$DC --dataset $DATASET -p "Count rows"
+```
+
+Launch in one-shot JSON mode:
+
+```bash
+$DC --dataset $DATASET -p "Count rows by Survived" --json
+```
+
+Launch Terminal UI:
+
+```bash
+$DC
+```
+
 ## 1) Minimum flow: search -> install -> query
 
 ```bash
@@ -95,7 +125,49 @@ show 10 random rows
 /exit
 ```
 
-## 9) Test approval-gated execution
+## 9) Terminal UI walkthrough (step by step)
+
+Start Terminal UI:
+
+```bash
+$DC
+```
+
+1) List datasets:
+
+```text
+/datasets
+```
+
+2) Activate one dataset:
+
+```text
+/dataset heptapod_titanic
+```
+
+3) Ask questions:
+
+```text
+count rows by survived
+average fare by class
+show null counts per column
+```
+
+4) Toggle approvals:
+
+```text
+/yolo on
+/yolo off
+```
+
+5) Show help and exit:
+
+```text
+/help
+/exit
+```
+
+## 10) Test approval-gated execution
 
 ```bash
 $DC ask --dataset $DATASET --prompt "Create table tmp as select * from main_table limit 10"
@@ -109,7 +181,7 @@ If you want to skip confirmation for that execution:
 $DC ask --dataset $DATASET --prompt "Create table tmp as select * from main_table limit 10" --yolo
 ```
 
-## 10) Learning memory
+## 11) Learning memory
 
 Search memory:
 
@@ -125,7 +197,7 @@ $DC memory curate
 $DC memory curate --dataset $DATASET
 ```
 
-## 11) Scheduled runs (cron)
+## 12) Scheduled runs (cron)
 
 Daily example at 08:00:
 
@@ -133,7 +205,7 @@ Daily example at 08:00:
 0 8 * * * cd /path/to/dataclaw && npm exec dataclaw -- --dataset heptapod_titanic -p "Daily KPI summary" --json >> /path/to/dataclaw/.dataclaw/logs/cron.log 2>&1
 ```
 
-## 12) Quick troubleshooting examples
+## 13) Quick troubleshooting examples
 
 Kaggle credentials missing:
 
