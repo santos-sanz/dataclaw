@@ -9,6 +9,10 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean && npm run -ws clean",
+    "check:runtime": "node scripts/runtime-health-check.mjs",
+    "quality:gate": "npm run typecheck && npm run build && npm run test && npm run check:runtime",
+    "hooks:install": "node scripts/install-git-hooks.mjs",
+    "prepare": "npm run hooks:install",
     "typecheck": "tsc -b --pretty false",
     "test": "npm run build && npm run -ws test"
   },

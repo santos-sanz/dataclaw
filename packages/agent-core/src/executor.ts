@@ -154,6 +154,9 @@ export class Executor {
 
 function generateFallbackPython(sql: string, sqlError: string): string {
   return [
+    "import importlib.util",
+    "if importlib.util.find_spec('duckdb') is None:",
+    "    raise RuntimeError(\"Python dependency missing: install with 'python3 -m pip install duckdb'\")",
     "import duckdb",
     "con = duckdb.connect(database=DB_PATH, read_only=False)",
     `query = '''${sql.replace(/'''/g, "\\'\\'\\'")}'''`,
@@ -162,5 +165,7 @@ function generateFallbackPython(sql: string, sqlError: string): string {
     "    print(result.head(50).to_string(index=False))",
     "except Exception as err:",
     `    raise RuntimeError('Original SQL failed: ${sqlError.replace(/'/g, "\\'")}') from err`,
+    "finally:",
+    "    con.close()",
   ].join("\n");
 }

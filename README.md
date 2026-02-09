@@ -399,6 +399,20 @@ npm exec dataclaw -- dataset list
 Without `OPENROUTER_API_KEY`, DataClaw uses a heuristic planner (less precise).  
 For better results, set `OPENROUTER_API_KEY` in `.env`.
 
+### Error: Python fallback dependency missing (`No module named 'duckdb'`)
+
+Typical message:
+
+```text
+Python fallback also failed... ModuleNotFoundError: No module named 'duckdb'
+```
+
+Fix:
+
+```bash
+python3 -m pip install duckdb
+```
+
 ## 8. Additional docs
 
 - Advanced recipes, launch patterns, and Terminal UI walkthrough: [`docs/CLI_COOKBOOK.md`](docs/CLI_COOKBOOK.md)
@@ -421,3 +435,23 @@ npm run build
 npm run typecheck
 npm run test
 ```
+
+Pre-commit quality gate (strict):
+
+```bash
+npm run quality:gate
+```
+
+What it verifies:
+
+- TypeScript typecheck.
+- Full monorepo build.
+- All workspace tests.
+- Runtime health for SQL/fallback stack:
+  - Node `duckdb` can open and query.
+  - Python `duckdb` can import and query.
+
+Git hook setup:
+
+- Hooks are auto-installed on `npm install` via `prepare`.
+- Manual install (if needed): `npm run hooks:install`

@@ -38,4 +38,4 @@ DataClaw follows a pi-mono-style package split with clear boundaries.
 
 - DataClaw expects the `kaggle` CLI to be installed and authenticated.
 - DuckDB runtime dependency is provided through the `duckdb` Node package.
-- Python fallback expects `python3` in PATH.
+- Python fallback expects `python3` in PATH and Python package `duckdb` installed.
