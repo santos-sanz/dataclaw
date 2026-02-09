@@ -4,6 +4,12 @@ import type { DatasetManifest } from "@dataclaw/shared";
 import { ensureProjectDirectories, getDatasetRoot, getProjectPaths } from "@dataclaw/shared";
 import { readText, safeTableName, writeText } from "../utils/fs-utils.js";
 import { DuckDbService } from "./duckdb-service.js";
+import {
+  deriveFormatsFromDatasetFiles,
+  normalizeDatasetFormatToken,
+  rankKaggleDatasets,
+  type RankedKaggleDataset,
+} from "./dataset-search-ranking.js";
 import { KaggleService } from "./kaggle-service.js";
 
 export class DatasetService {
@@ -73,6 +79,32 @@ export class DatasetService {
   async searchRemoteDatasets(query: string, fileType?: string, page: number = 1): Promise<string> {
     return this.kaggleService.searchDatasets(query, fileType, page);
   }
+
+  async searchRemoteDatasetsRanked(query: string, fileType?: string, page: number = 1): Promise<RankedKaggleDataset[]> {
+    const datasets = await this.kaggleService.searchDatasetsParsed(query, fileType, page);
+    const assumedFormat = fileType && fileType !== "all" ? normalizeDatasetFormatToken(fileType) : undefined;
+    const ranked = rankKaggleDatasets(datasets, { assumedFormat });
+    const topForEnrichment = ranked.slice(0, 8);
+
+    await mapWithConcurrency(topForEnrichment, 4, async (dataset) => {
+      try {
+        const files = await this.kaggleService.listFilesParsed(dataset.ref);
+        const formats = deriveFormatsFromDatasetFiles(files);
+        const hasSpecificFormats = formats.some((format) => format !== "unknown");
+        if (hasSpecificFormats) {
+          dataset.formats = formats;
+        } else if (!dataset.formats.length) {
+          dataset.formats = ["unknown"];
+        }
+      } catch {
+        if (!dataset.formats.length) {
+          dataset.formats = ["unknown"];
+        }
+      }
+    });
+
+    return ranked;
+  }
 }
 
 export function slugToDatasetId(slug: string): string {
@@ -85,4 +117,24 @@ export function inferSourceTables(manifest: DatasetManifest): string[] {
 
 export function inferMainTable(manifest: DatasetManifest): string {
   return manifest.tables[0]?.name ?? "main_table";
+}
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  const size = Math.max(1, Math.floor(concurrency));
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      await worker(items[index], index);
+    }
+  });
+
+  await Promise.all(runners);
 }

@@ -1,13 +1,37 @@
 import { join } from "node:path";
+import readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 import { Command } from "commander";
 import dotenv from "dotenv";
 import { runInteractiveSession } from "@dataclaw/tui";
+import type { DatasetManifest } from "@dataclaw/shared";
 import { DatasetService } from "../services/dataset-service.js";
+import type { RankedKaggleDataset } from "../services/dataset-search-ranking.js";
 import { AskService } from "../services/ask-service.js";
 import { MarkdownMemoryService } from "../services/memory-service.js";
+import { renderRankedDatasetSearch } from "./dataset-search-render.js";
 import { renderAskResult } from "./render.js";
 
 dotenv.config({ path: join(process.cwd(), ".env") });
+
+interface DatasetSearchService {
+  searchRemoteDatasets: (query: string, fileType?: string, page?: number) => Promise<string>;
+  searchRemoteDatasetsRanked: (query: string, fileType?: string, page?: number) => Promise<RankedKaggleDataset[]>;
+  addDataset: (ownerSlug: string) => Promise<DatasetManifest>;
+}
+
+export interface DatasetSearchCommandOptions {
+  fileType: string;
+  page: string;
+  raw: boolean;
+  pick: boolean;
+}
+
+export interface DatasetSearchIo {
+  isTTY: boolean;
+  writeLine: (line: string) => void;
+  prompt: (message: string) => Promise<string>;
+}
 
 export function createProgram(cwd: string = process.cwd()): Command {
   const program = new Command();
@@ -45,12 +69,12 @@ export function createProgram(cwd: string = process.cwd()): Command {
   datasetCommand
     .command("search <query>")
     .description("Search remote Kaggle datasets you can work with")
-    .option("--file-type <type>", "Optional file type filter: all|csv|sqlite|json|bigQuery", "all")
+    .option("--file-type <type>", "Optional file type filter: all|csv|sqlite|json|bigQuery|parquet", "all")
     .option("--page <number>", "Result page number", "1")
-    .action(async (query: string, opts: { fileType: string; page: string }) => {
-      const page = Number.parseInt(opts.page, 10);
-      const output = await datasetService.searchRemoteDatasets(query, opts.fileType, Number.isNaN(page) ? 1 : page);
-      console.log(output || "(no datasets)");
+    .option("--raw", "Print Kaggle CSV output as-is", false)
+    .option("--pick", "Interactively pick a ranked dataset and install it", false)
+    .action(async (query: string, opts: DatasetSearchCommandOptions) => {
+      await runDatasetSearchCommand(datasetService, query, opts);
     });
 
   datasetCommand
@@ -138,4 +162,88 @@ export function createProgram(cwd: string = process.cwd()): Command {
   });
 
   return program;
+}
+
+export async function runDatasetSearchCommand(
+  datasetService: DatasetSearchService,
+  query: string,
+  opts: DatasetSearchCommandOptions,
+  io: DatasetSearchIo = createDefaultDatasetSearchIo(),
+): Promise<void> {
+  const page = Number.parseInt(opts.page, 10);
+  const safePage = Number.isNaN(page) ? 1 : page;
+
+  if (opts.raw && opts.pick) {
+    throw new Error("--raw and --pick cannot be used together.");
+  }
+
+  if (opts.raw) {
+    const raw = await datasetService.searchRemoteDatasets(query, opts.fileType, safePage);
+    io.writeLine(raw);
+    return;
+  }
+
+  const ranked = await datasetService.searchRemoteDatasetsRanked(query, opts.fileType, safePage);
+  io.writeLine(renderRankedDatasetSearch(ranked));
+
+  if (!opts.pick) return;
+  if (!io.isTTY) {
+    throw new Error("--pick requires an interactive TTY.");
+  }
+  if (!ranked.length) {
+    io.writeLine("No ranked datasets available to install.");
+    return;
+  }
+
+  const answer = (await io.prompt("Select dataset to install (rank number, ref, Enter to skip): ")).trim();
+  const selection = resolveDatasetPickSelection(answer, ranked);
+  if (selection.kind === "skip") {
+    io.writeLine("Install skipped.");
+    return;
+  }
+  if (selection.kind === "invalid") {
+    io.writeLine(`Invalid selection '${answer}'. Installation skipped.`);
+    return;
+  }
+
+  const manifest = await datasetService.addDataset(selection.dataset.ref);
+  io.writeLine(`Dataset installed: ${manifest.id}`);
+  io.writeLine(`Tables: ${manifest.tables.map((table) => table.name).join(", ") || "(none)"}`);
+}
+
+export function resolveDatasetPickSelection(
+  inputText: string,
+  ranked: RankedKaggleDataset[],
+): { kind: "skip" } | { kind: "invalid" } | { kind: "selected"; dataset: RankedKaggleDataset } {
+  if (!inputText) return { kind: "skip" };
+
+  if (/^\d+$/.test(inputText)) {
+    const index = Number.parseInt(inputText, 10);
+    if (index >= 1 && index <= ranked.length) {
+      return { kind: "selected", dataset: ranked[index - 1] };
+    }
+    return { kind: "invalid" };
+  }
+
+  const direct = ranked.find((item) => item.ref === inputText);
+  if (direct) return { kind: "selected", dataset: direct };
+
+  return { kind: "invalid" };
+}
+
+function createDefaultDatasetSearchIo(): DatasetSearchIo {
+  return {
+    isTTY: Boolean(input.isTTY && output.isTTY),
+    writeLine: (line: string) => {
+      console.log(line);
+    },
+    prompt: async (message: string) => {
+      const rl = readline.createInterface({ input, output });
+      try {
+        return await rl.question(message);
+      } finally {
+        rl.close();
+      }
+    },
+  };
 }

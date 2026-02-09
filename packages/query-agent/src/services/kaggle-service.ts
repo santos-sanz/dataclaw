@@ -3,10 +3,25 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ensureDirectory } from "../utils/fs-utils.js";
+import {
+  parseKaggleDatasetFilesCsv,
+  parseKaggleDatasetSearchCsv,
+  type KaggleDatasetFileRow,
+  type KaggleDatasetSearchRow,
+} from "./dataset-search-ranking.js";
 
 export class KaggleService {
   async listFiles(dataset: string): Promise<string> {
     return runKaggleCommand(["datasets", "files", dataset]);
+  }
+
+  async listFilesCsv(dataset: string): Promise<string> {
+    return runKaggleCommand(["datasets", "files", dataset, "--csv"]);
+  }
+
+  async listFilesParsed(dataset: string): Promise<KaggleDatasetFileRow[]> {
+    const csv = await this.listFilesCsv(dataset);
+    return parseKaggleDatasetFilesCsv(csv);
   }
 
   async downloadDataset(dataset: string, outputDir: string): Promise<void> {
@@ -20,6 +35,11 @@ export class KaggleService {
       args.push("--file-type", fileType);
     }
     return runKaggleCommand(args);
+  }
+
+  async searchDatasetsParsed(query: string, fileType?: string, page: number = 1): Promise<KaggleDatasetSearchRow[]> {
+    const csv = await this.searchDatasets(query, fileType, page);
+    return parseKaggleDatasetSearchCsv(csv);
   }
 }
 
