@@ -1,6 +1,6 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import type { AskResult } from "@dataclaw/shared";
+import { renderAskResult, type AskResult } from "@dataclaw/shared";
 
 export interface InteractiveSessionHandlers {
   onAsk: (prompt: string, options: { datasetId: string; yolo: boolean }) => Promise<AskResult>;
@@ -84,16 +84,10 @@ function printHelp(): void {
 }
 
 function renderResult(result: AskResult): void {
-  output.write("\nPLAN\n");
-  output.write(`${JSON.stringify(result.plan, null, 2)}\n`);
-  output.write("COMMAND\n");
-  output.write(`${result.command}\n`);
-  output.write("RESULT\n");
-  output.write(`${result.result}\n`);
-  output.write("EXPLANATION\n");
-  output.write(`${result.explanation}\n`);
-  output.write("SOURCE_TABLES\n");
-  output.write(`${result.sourceTables.join(", ") || "(none)"}\n`);
-  output.write("LEARNINGS_USED\n");
-  output.write(`${result.learningsUsed.join(", ") || "(none)"}\n\n`);
+  output.write("\n");
+  output.write(
+    `${renderAskResult(result, {
+      maxWidth: output.columns ?? 100,
+    })}\n\n`,
+  );
 }
