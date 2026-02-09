@@ -69,6 +69,10 @@ export class DatasetService {
   async listRemoteFiles(datasetSlug: string): Promise<string> {
     return this.kaggleService.listFiles(datasetSlug);
   }
+
+  async searchRemoteDatasets(query: string, fileType?: string, page: number = 1): Promise<string> {
+    return this.kaggleService.searchDatasets(query, fileType, page);
+  }
 }
 
 export function slugToDatasetId(slug: string): string {

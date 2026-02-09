@@ -43,6 +43,17 @@ export function createProgram(cwd: string = process.cwd()): Command {
     });
 
   datasetCommand
+    .command("search <query>")
+    .description("Search remote Kaggle datasets you can work with")
+    .option("--file-type <type>", "Optional file type filter: all|csv|sqlite|json|bigQuery", "all")
+    .option("--page <number>", "Result page number", "1")
+    .action(async (query: string, opts: { fileType: string; page: string }) => {
+      const page = Number.parseInt(opts.page, 10);
+      const output = await datasetService.searchRemoteDatasets(query, opts.fileType, Number.isNaN(page) ? 1 : page);
+      console.log(output || "(no datasets)");
+    });
+
+  datasetCommand
     .command("list")
     .description("List ingested local datasets")
     .action(() => {
