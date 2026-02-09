@@ -165,6 +165,12 @@ npm exec dataclaw -- ask --dataset heptapod_titanic --prompt "How many rows are 
 npm exec dataclaw -- --dataset heptapod_titanic -p "Count rows by Survived" --json
 ```
 
+### 3.6 Example execution output
+
+Example of a real query run against a local dataset:
+
+![DataClaw execution example](docs/images/example-stock-market-regimes-execution.png)
+
 ## 4. Command guide with many examples
 
 Practical tip: define a short alias.
