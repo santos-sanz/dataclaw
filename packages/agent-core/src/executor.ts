@@ -136,6 +136,56 @@ export class Executor {
         }
       }
 
+      if (context.plan.language === "python" && isMissingTablesNameError(message)) {
+        const retryCommand = injectPythonTableContext(context.plan.command, context.sourceTables);
+        try {
+          const retryResult = await context.runPython(retryCommand);
+          await context.saveLearning({
+            datasetId: context.datasetId,
+            symptom: `Python failed: ${message}`,
+            rootCause: "Planner-generated Python referenced 'tables' without defining it.",
+            fix: "Injected table context variables (`tables`, `main_table`) and retried.",
+            command: retryCommand,
+            language: "python",
+          });
+
+          await context.appendAudit({
+            timestamp: new Date().toISOString(),
+            datasetId: context.datasetId,
+            command: context.plan.command,
+            language: "python",
+            mutating,
+            approved,
+            yolo: context.yolo,
+            success: true,
+          });
+
+          return {
+            plan: context.plan,
+            command: retryCommand,
+            result: retryResult,
+            explanation: `${context.plan.explanationSeed} Python failed with missing 'tables'; DataClaw injected table context and retried.`,
+            sourceTables: context.sourceTables,
+            learningsUsed: context.memoryHintsUsed,
+            fallbackUsed: true,
+          };
+        } catch (retryError) {
+          const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
+          await context.appendAudit({
+            timestamp: new Date().toISOString(),
+            datasetId: context.datasetId,
+            command: context.plan.command,
+            language: "python",
+            mutating,
+            approved,
+            yolo: context.yolo,
+            success: false,
+            error: `Python failed (${message}); table-context retry failed (${retryMessage})`,
+          });
+          throw new Error(`Python failed: ${message}. Table-context retry also failed: ${retryMessage}`);
+        }
+      }
+
       await context.appendAudit({
         timestamp: new Date().toISOString(),
         datasetId: context.datasetId,
@@ -167,5 +217,18 @@ function generateFallbackPython(sql: string, sqlError: string): string {
     `    raise RuntimeError('Original SQL failed: ${sqlError.replace(/'/g, "\\'")}') from err`,
     "finally:",
     "    con.close()",
+  ].join("\n");
+}
+
+function isMissingTablesNameError(message: string): boolean {
+  return /NameError:\s*name ['"]tables['"] is not defined/.test(message);
+}
+
+function injectPythonTableContext(command: string, sourceTables: string[]): string {
+  const tablesLiteral = JSON.stringify(sourceTables);
+  return [
+    `tables = ${tablesLiteral}`,
+    "main_table = tables[0] if tables else None",
+    command,
   ].join("\n");
 }

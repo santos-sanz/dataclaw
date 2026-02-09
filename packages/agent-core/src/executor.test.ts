@@ -14,6 +14,17 @@ function createPlan(command: string): PlannerOutput {
   };
 }
 
+function createPythonPlan(command: string): PlannerOutput {
+  return {
+    intent: "python test intent",
+    language: "python",
+    command,
+    requiresApproval: false,
+    expectedShape: "text",
+    explanationSeed: "Python execution path.",
+  };
+}
+
 function createSqlContext(overrides: Partial<Parameters<Executor["execute"]>[0]> = {}): Parameters<Executor["execute"]>[0] {
   const audits: ToolExecutionAudit[] = [];
   const base: Parameters<Executor["execute"]>[0] = {
@@ -101,4 +112,72 @@ test("execute surfaces SQL and fallback failures together", async () => {
   assert.equal(audits.length, 1);
   assert.equal(audits[0].success, false);
   assert.match(audits[0].error ?? "", /fallback failed/);
+});
+
+test("execute retries python plans when 'tables' is undefined", async () => {
+  const executor = new Executor();
+  const calls: string[] = [];
+  const audits: ToolExecutionAudit[] = [];
+  const savedLearnings: string[] = [];
+
+  const result = await executor.execute(
+    createSqlContext({
+      plan: createPythonPlan("print(tables[0])"),
+      runPython: async (code) => {
+        calls.push(code);
+        if (calls.length === 1) {
+          throw new Error("Traceback (most recent call last):\n  File \"<string>\", line 6, in <module>\nNameError: name 'tables' is not defined");
+        }
+        return "table_a";
+      },
+      saveLearning: async (learning) => {
+        savedLearnings.push(learning.symptom);
+      },
+      appendAudit: async (entry) => {
+        audits.push(entry);
+      },
+    }),
+  );
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[1], /^tables = \["table_a"\]/m);
+  assert.match(calls[1], /^main_table = tables\[0\] if tables else None/m);
+  assert.equal(result.result, "table_a");
+  assert.equal(result.fallbackUsed, true);
+  assert.match(result.explanation, /missing 'tables'/);
+  assert.equal(savedLearnings.length, 1);
+  assert.match(savedLearnings[0], /Python failed: .*NameError/s);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].success, true);
+});
+
+test("execute reports both python error and table-context retry error", async () => {
+  const executor = new Executor();
+  const audits: ToolExecutionAudit[] = [];
+  let calls = 0;
+
+  await assert.rejects(
+    () =>
+      executor.execute(
+        createSqlContext({
+          plan: createPythonPlan("print(tables[0])"),
+          runPython: async () => {
+            calls += 1;
+            if (calls === 1) {
+              throw new Error("NameError: name 'tables' is not defined");
+            }
+            throw new Error("SyntaxError: invalid syntax");
+          },
+          appendAudit: async (entry) => {
+            audits.push(entry);
+          },
+        }),
+      ),
+    /Python failed: NameError: name 'tables' is not defined\. Table-context retry also failed: SyntaxError: invalid syntax/,
+  );
+
+  assert.equal(calls, 2);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].success, false);
+  assert.match(audits[0].error ?? "", /table-context retry failed/);
 });
