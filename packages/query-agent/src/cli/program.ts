@@ -3,8 +3,8 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { Command } from "commander";
 import dotenv from "dotenv";
-import { runInteractiveSession } from "@dataclaw/tui";
-import type { DatasetManifest } from "@dataclaw/shared";
+import { runInteractiveSession, type InteractiveCommandContext } from "@dataclaw/tui";
+import type { DatasetManifest, ModelBuildResult } from "@dataclaw/shared";
 import {
   DatasetService,
   type DiscoverRemoteDatasetsOptions,
@@ -14,9 +14,12 @@ import {
 import type { RankedKaggleDataset } from "../services/dataset-search-ranking.js";
 import { AskService } from "../services/ask-service.js";
 import { MarkdownMemoryService } from "../services/memory-service.js";
+import { ModelAgentService, parseTablesFlag, summarizeArtifacts, type BuildModelInput } from "../services/model-agent-service.js";
 import { renderDatasetDiscovery } from "./dataset-discovery-render.js";
 import { renderDatasetInspection } from "./dataset-inspect-render.js";
 import { renderRankedDatasetSearch } from "./dataset-search-render.js";
+import { runModelBuildPreview } from "./model-build-preview.js";
+import { launchModelWebApp, type LaunchModelWebAppResult } from "./model-web-app.js";
 import { renderAskResult } from "./render.js";
 
 dotenv.config({ path: join(process.cwd(), ".env") });
@@ -31,6 +34,10 @@ interface DatasetDiscoveryService {
   discoverRemoteDatasets: (options: DiscoverRemoteDatasetsOptions) => Promise<RemoteDatasetDiscoveryResult>;
   inspectRemoteDataset: (ref: string) => Promise<RemoteDatasetInspection>;
   addDataset: (ownerSlug: string) => Promise<DatasetManifest>;
+}
+
+interface ModelBuildService {
+  buildModel: (input: BuildModelInput) => Promise<ModelBuildResult>;
 }
 
 export interface DatasetSearchCommandOptions {
@@ -52,17 +59,38 @@ export interface DatasetDiscoverCommandOptions {
   interactive: boolean;
 }
 
+export interface ModelBuildCommandOptions {
+  dataset: string;
+  tables: string;
+  goal?: string;
+  yolo: boolean;
+  web: boolean;
+  port: string;
+  host: string;
+}
+
+export interface ModelWebCommandOptions {
+  dataset: string;
+  runId?: string;
+  port: string;
+  host: string;
+}
+
 export interface DatasetSearchIo {
   isTTY: boolean;
   writeLine: (line: string) => void;
   prompt: (message: string) => Promise<string>;
 }
 
+type ModelPreviewRunner = (result: ModelBuildResult, io: DatasetSearchIo) => Promise<void>;
+type ModelWebLauncher = (input: { datasetId: string; runId?: string; port: number; host: string }) => Promise<LaunchModelWebAppResult>;
+
 export function createProgram(cwd: string = process.cwd()): Command {
   const program = new Command();
   const datasetService = new DatasetService(cwd);
   const askService = new AskService(cwd);
   const memoryService = new MarkdownMemoryService(cwd);
+  const modelAgentService = new ModelAgentService(cwd);
 
   program
     .name("dataclaw")
@@ -187,6 +215,45 @@ export function createProgram(cwd: string = process.cwd()): Command {
       console.log(`Curated ${promoted.length} learning entries.`);
     });
 
+  const modelCommand = program.command("model").description("Dataset modeling commands");
+
+  modelCommand
+    .command("build")
+    .description("Generate and apply SQL model, then scaffold dynamic TypeScript React components")
+    .requiredOption("--dataset <datasetId>", "Local dataset id")
+    .requiredOption("--tables <tables>", "Comma-separated table names to model")
+    .option("--goal <goal>", "Optional modeling goal context")
+    .option("--yolo", "Bypass approval gate for mutating model SQL", false)
+    .option("--web", "Launch web app after build", false)
+    .option("--port <port>", "Web app port when using --web", "4173")
+    .option("--host <host>", "Web app host when using --web", "127.0.0.1")
+    .action(async (opts: ModelBuildCommandOptions) => {
+      await runModelBuildCommand(
+        modelAgentService,
+        opts,
+        createDefaultDatasetSearchIo(),
+        runModelBuildPreview,
+        ({ datasetId, runId, port, host }) => launchModelWebApp({ cwd, datasetId, runId, port, host }),
+      );
+    });
+
+  modelCommand
+    .command("web")
+    .description("Launch a local web app to visualize SQL model output")
+    .requiredOption("--dataset <datasetId>", "Local dataset id")
+    .option("--run-id <runId>", "Specific model run id (defaults to latest)")
+    .option("--port <port>", "Web app port", "4173")
+    .option("--host <host>", "Web app host", "127.0.0.1")
+    .action(async (opts: ModelWebCommandOptions) => {
+      await runModelWebCommand(
+        cwd,
+        datasetService,
+        opts,
+        createDefaultDatasetSearchIo(),
+        ({ datasetId, runId, port, host }) => launchModelWebApp({ cwd, datasetId, runId, port, host }),
+      );
+    });
+
   program.action(async () => {
     const opts = program.opts<{ prompt?: string; dataset?: string; json?: boolean; yolo?: boolean }>();
 
@@ -206,8 +273,25 @@ export function createProgram(cwd: string = process.cwd()): Command {
     await runInteractiveSession({
       onAsk: (prompt, options) => askService.ask(options.datasetId, prompt, options.yolo),
       onListDatasets: async () => datasetService.listDatasets(),
+      onCommand: async (command, context) =>
+        runInteractiveModelCommand({
+          command,
+          context,
+          cwd,
+          datasetService,
+          modelService: modelAgentService,
+        }),
     }, {
       compatibility: "auto",
+      bannerLines: [
+        "/model build --tables <t1,t2> to generate SQL model and TSX artifacts",
+        "/model web to launch the web dashboard for SQL-extracted data",
+      ],
+      helpLines: [
+        `/model help      ${"Show model command help"}`,
+        `/model build ... ${"Build model from active dataset (or --dataset)"}`,
+        `/model web ...   ${"Open model web app from active dataset (or --dataset)"}`,
+      ],
     });
   });
 
@@ -259,6 +343,103 @@ export async function runDatasetSearchCommand(
   const manifest = await datasetService.addDataset(selection.dataset.ref);
   io.writeLine(`Dataset installed: ${manifest.id}`);
   io.writeLine(`Tables: ${manifest.tables.map((table) => table.name).join(", ") || "(none)"}`);
+}
+
+export async function runModelBuildCommand(
+  modelService: ModelBuildService,
+  opts: ModelBuildCommandOptions,
+  io: DatasetSearchIo = createDefaultDatasetSearchIo(),
+  previewRunner: ModelPreviewRunner = runModelBuildPreview,
+  webLauncher: ModelWebLauncher = async (input) =>
+    launchModelWebApp({
+      cwd: process.cwd(),
+      datasetId: input.datasetId,
+      runId: input.runId,
+      port: input.port,
+      host: input.host,
+    }),
+): Promise<void> {
+  if (!io.isTTY && !opts.web) {
+    throw new Error("Model build preview requires an interactive TTY.");
+  }
+
+  const dataset = opts.dataset?.trim();
+  if (!dataset) {
+    throw new Error("model build requires --dataset <datasetId>.");
+  }
+
+  const selectedTables = parseTablesFlag(opts.tables ?? "");
+  if (!selectedTables.length) {
+    throw new Error("model build requires --tables <table1,table2,...> with at least one table.");
+  }
+
+  const port = parsePort(opts.port ?? "4173");
+  const host = (opts.host ?? "127.0.0.1").trim() || "127.0.0.1";
+
+  const result = await modelService.buildModel({
+    datasetId: dataset,
+    selectedTables,
+    goal: opts.goal?.trim() || undefined,
+    yolo: Boolean(opts.yolo),
+  });
+
+  io.writeLine(`Model build completed: run=${result.artifacts.runId}`);
+  io.writeLine(`Output directory: ${result.artifacts.outputDir}`);
+  io.writeLine("Artifacts:");
+  io.writeLine(summarizeArtifacts(result.artifacts.files));
+  io.writeLine("");
+
+  if (opts.web) {
+    const session = await webLauncher({
+      datasetId: dataset,
+      runId: result.artifacts.runId,
+      port,
+      host,
+    });
+    io.writeLine(`Web app running at ${session.url}`);
+    io.writeLine("Press Ctrl+C to stop the server.");
+    return;
+  }
+
+  io.writeLine("Launching model preview. Type 'help' for available commands.");
+  await previewRunner(result, io);
+}
+
+export async function runModelWebCommand(
+  cwd: string,
+  datasetService: Pick<DatasetService, "datasetIdFromAny">,
+  opts: ModelWebCommandOptions,
+  io: DatasetSearchIo = createDefaultDatasetSearchIo(),
+  webLauncher: ModelWebLauncher = async (input) =>
+    launchModelWebApp({
+      cwd,
+      datasetId: input.datasetId,
+      runId: input.runId,
+      port: input.port,
+      host: input.host,
+    }),
+): Promise<void> {
+  const datasetInput = opts.dataset?.trim();
+  if (!datasetInput) {
+    throw new Error("model web requires --dataset <datasetId>.");
+  }
+
+  const datasetId = datasetService.datasetIdFromAny(datasetInput);
+  const port = parsePort(opts.port ?? "4173");
+  const host = (opts.host ?? "127.0.0.1").trim() || "127.0.0.1";
+  const runId = opts.runId?.trim() || undefined;
+
+  const session = await webLauncher({
+    datasetId,
+    runId,
+    port,
+    host,
+  });
+
+  io.writeLine(`Model web app running at ${session.url}`);
+  io.writeLine(`Dataset: ${datasetId}`);
+  io.writeLine(`Run: ${session.runId}`);
+  io.writeLine("Press Ctrl+C to stop the server.");
 }
 
 export async function runDatasetInspectCommand(
@@ -437,6 +618,235 @@ function parseOptionalNonNegativeInt(name: string, value: string | undefined): n
     throw new Error(`Invalid --${name} value '${value}'. Expected a non-negative integer.`);
   }
   return parsed;
+}
+
+function parsePort(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error(`Invalid --port value '${value}'. Expected an integer between 1 and 65535.`);
+  }
+  return parsed;
+}
+
+interface InteractiveModelCommandInput {
+  command: string;
+  context: InteractiveCommandContext;
+  cwd: string;
+  datasetService: Pick<DatasetService, "datasetIdFromAny" | "getManifest">;
+  modelService: ModelBuildService;
+}
+
+async function runInteractiveModelCommand(input: InteractiveModelCommandInput): Promise<boolean> {
+  const normalized = normalizeInteractiveModelInput(input.command);
+  if (!normalized) {
+    return false;
+  }
+
+  const tokens = tokenizeShellish(normalized);
+  const subcommand = tokens[1]?.toLowerCase();
+  if (tokens.length === 1 || (tokens.length === 2 && subcommand === "help")) {
+    input.context.writeLine(renderInteractiveModelHelp());
+    return true;
+  }
+
+  const args = tokens.slice(2);
+  const io: DatasetSearchIo = {
+    isTTY: input.context.isTTY,
+    writeLine: input.context.writeLine,
+    prompt: input.context.prompt,
+  };
+  const webLauncher: ModelWebLauncher = ({ datasetId, runId, port, host }) =>
+    launchModelWebApp({ cwd: input.cwd, datasetId, runId, port, host });
+
+  if (subcommand === "build") {
+    const parsed = parseModelBuildInteractiveArgs(args, input.context);
+    if (!parsed.tables.trim()) {
+      const mappedDataset = input.datasetService.datasetIdFromAny(parsed.dataset);
+      const manifest = input.datasetService.getManifest(mappedDataset);
+      if (!manifest.tables.length) {
+        throw new Error(`Dataset '${mappedDataset}' has no tables available for model build.`);
+      }
+      parsed.dataset = mappedDataset;
+      parsed.tables = manifest.tables.map((table) => table.name).join(",");
+      io.writeLine(`No --tables provided. Using all dataset tables: ${manifest.tables.map((table) => table.name).join(", ")}`);
+    }
+    await runModelBuildCommand(
+      input.modelService,
+      parsed,
+      io,
+      runModelBuildPreview,
+      webLauncher,
+    );
+    return true;
+  }
+
+  if (subcommand === "web") {
+    const parsed = parseModelWebInteractiveArgs(args, input.context);
+    await runModelWebCommand(
+      input.cwd,
+      input.datasetService,
+      parsed,
+      io,
+      webLauncher,
+    );
+    return true;
+  }
+
+  throw new Error(`Unknown /model subcommand '${subcommand}'. Use '/model help'.`);
+}
+
+export function normalizeInteractiveModelInput(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+
+  let candidate = trimmed;
+  if (candidate.startsWith("/")) {
+    candidate = candidate.slice(1).trim();
+  }
+  if (/^dataclaw\s+/i.test(candidate)) {
+    candidate = candidate.replace(/^dataclaw\s+/i, "").trim();
+  }
+  if (!/^model(?:\s|$)/i.test(candidate)) {
+    return null;
+  }
+  return candidate;
+}
+
+function parseModelBuildInteractiveArgs(
+  args: string[],
+  context: InteractiveCommandContext,
+): ModelBuildCommandOptions {
+  let dataset = context.datasetId;
+  let tables = "";
+  let goal: string | undefined;
+  let yolo = context.yolo;
+  let web = false;
+  let port = "4173";
+  let host = "127.0.0.1";
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--dataset") {
+      dataset = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--tables") {
+      tables = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--goal") {
+      goal = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--port") {
+      port = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--host") {
+      host = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--web") {
+      web = true;
+      continue;
+    }
+    if (token === "--yolo") {
+      yolo = true;
+      continue;
+    }
+    if (token === "--no-yolo") {
+      yolo = false;
+      continue;
+    }
+
+    throw new Error(`Unknown flag '${token}' for /model build.`);
+  }
+
+  return {
+    dataset,
+    tables,
+    goal,
+    yolo,
+    web,
+    port,
+    host,
+  };
+}
+
+function parseModelWebInteractiveArgs(
+  args: string[],
+  context: InteractiveCommandContext,
+): ModelWebCommandOptions {
+  let dataset = context.datasetId;
+  let runId: string | undefined;
+  let port = "4173";
+  let host = "127.0.0.1";
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--dataset") {
+      dataset = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--run-id") {
+      runId = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--port") {
+      port = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--host") {
+      host = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`Unknown flag '${token}' for /model web.`);
+  }
+
+  return {
+    dataset,
+    runId,
+    port,
+    host,
+  };
+}
+
+function readArgValue(args: string[], flag: string, index: number): string {
+  const next = args[index + 1];
+  if (!next || next.startsWith("--")) {
+    throw new Error(`Missing value for '${flag}'.`);
+  }
+  return next;
+}
+
+function tokenizeShellish(input: string): string[] {
+  const tokens: string[] = [];
+  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^\s]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(input)) !== null) {
+    const raw = match[1] ?? match[2] ?? match[3] ?? "";
+    tokens.push(raw.replace(/\\(["'\\])/g, "$1"));
+  }
+  return tokens;
+}
+
+function renderInteractiveModelHelp(): string {
+  return [
+    "Model commands:",
+    "  /model build --tables <t1,t2> [--goal \"text\"] [--web] [--port 4173] [--host 127.0.0.1]",
+    "  /model web [--run-id <id>] [--port 4173] [--host 127.0.0.1]",
+    "  /model ... commands use active dataset from /dataset unless --dataset is provided.",
+  ].join("\n");
 }
 
 function createDefaultDatasetSearchIo(): DatasetSearchIo {

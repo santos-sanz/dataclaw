@@ -62,3 +62,76 @@ export interface ToolExecutionAudit {
   success: boolean;
   error?: string;
 }
+
+export interface ModelBuildRequest {
+  datasetId: string;
+  selectedTables: string[];
+  goal?: string;
+  yolo: boolean;
+}
+
+export interface ModelJoinPlanEdge {
+  left: string;
+  right: string;
+  condition: string;
+  confidence: number;
+  source: "llm" | "heuristic";
+  skipped?: boolean;
+  reason?: string;
+}
+
+export interface ModelTableComponentSpec {
+  tableName: string;
+  componentName: string;
+  purpose: string;
+}
+
+export interface ModelComponentBlueprint {
+  rendererName: string;
+  rendererDescription: string;
+  tableComponents: ModelTableComponentSpec[];
+  themeName: string;
+  styleDirection: string;
+}
+
+export interface ModelBuildPlan {
+  strategy: "llm" | "fallback";
+  sqlStatements: string[];
+  joinPlan: ModelJoinPlanEdge[];
+  componentBlueprint: ModelComponentBlueprint;
+  naming: {
+    modelView: string;
+    baseViews: Record<string, string>;
+  };
+  assumptions: string[];
+  warnings: string[];
+}
+
+export interface GeneratedModelArtifactFile {
+  id: string;
+  kind: "sql" | "json" | "typescript" | "tsx" | "css";
+  path: string;
+  description: string;
+}
+
+export interface GeneratedModelArtifacts {
+  runId: string;
+  outputDir: string;
+  files: GeneratedModelArtifactFile[];
+}
+
+export interface ModelPreviewItem {
+  id: string;
+  title: string;
+  kind: "overview" | "sql" | "component" | "file";
+  path?: string;
+  content: string;
+}
+
+export interface ModelBuildResult {
+  request: ModelBuildRequest;
+  plan: ModelBuildPlan;
+  artifacts: GeneratedModelArtifacts;
+  applied: boolean;
+  previewItems: ModelPreviewItem[];
+}

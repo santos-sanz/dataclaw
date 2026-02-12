@@ -9,15 +9,28 @@ import { buildTheme, resolveThemeContext, type CompatibilityMode, type Theme } f
 export interface InteractiveSessionHandlers {
   onAsk: (prompt: string, options: { datasetId: string; yolo: boolean }) => Promise<AskResult>;
   onListDatasets: () => Promise<string[]>;
+  onCommand?: (command: string, context: InteractiveCommandContext) => Promise<boolean>;
 }
 
 export interface InteractiveSessionOptions {
   compatibility?: CompatibilityMode;
+  bannerLines?: string[];
+  helpLines?: string[];
 }
 
 export interface PromptRenderState {
   datasetId: string;
   yolo: boolean;
+}
+
+export interface InteractiveCommandContext {
+  datasetId: string;
+  yolo: boolean;
+  isTTY: boolean;
+  setDatasetId: (value: string) => void;
+  setYolo: (value: boolean) => void;
+  writeLine: (line: string) => void;
+  prompt: (message: string) => Promise<string>;
 }
 
 export function renderPrompt(state: PromptRenderState, theme: Theme): string {
@@ -36,12 +49,13 @@ export function renderPrompt(state: PromptRenderState, theme: Theme): string {
   ].join(" ");
 }
 
-export function createInteractiveBanner(theme: Theme): string {
+export function createInteractiveBanner(theme: Theme, extraLines: string[] = []): string {
   const lines = [
     `${theme.style.accent("DataClaw")}${theme.style.muted(" interactive session")}`,
     `${theme.symbols.bullet} /dataset <id> to choose active dataset`,
     `${theme.symbols.bullet} /datasets to list ingested datasets`,
     `${theme.symbols.bullet} /yolo on|off to toggle approval bypass`,
+    ...extraLines.map((line) => `${theme.symbols.bullet} ${line}`),
     `${theme.symbols.bullet} /help for commands, /exit to quit`,
   ];
 
@@ -90,7 +104,7 @@ export async function runInteractiveSession(
     }),
   );
 
-  output.write(`${createInteractiveBanner(theme)}\n\n`);
+  output.write(`${createInteractiveBanner(theme, options.bannerLines ?? [])}\n\n`);
 
   while (true) {
     const raw = (await rl.question(renderPrompt({ datasetId, yolo }, theme))).trim();
@@ -101,7 +115,7 @@ export async function runInteractiveSession(
     }
 
     if (raw === "/help") {
-      output.write(`${renderHelp(theme)}\n`);
+      output.write(`${renderHelp(theme, options.helpLines ?? [])}\n`);
       continue;
     }
 
@@ -134,6 +148,32 @@ export async function runInteractiveSession(
       continue;
     }
 
+    if (handlers.onCommand) {
+      try {
+        const handled = await handlers.onCommand(raw, {
+          datasetId,
+          yolo,
+          isTTY: Boolean(input.isTTY && output.isTTY),
+          setDatasetId: (value) => {
+            datasetId = value;
+          },
+          setYolo: (value) => {
+            yolo = value;
+          },
+          writeLine: (line) => {
+            output.write(`${line}\n`);
+          },
+          prompt: (message) => rl.question(message),
+        });
+        if (handled) continue;
+      } catch (error) {
+        output.write(
+          `${formatSystemMessage("error", `Error: ${error instanceof Error ? error.message : String(error)}`, theme)}\n`,
+        );
+        continue;
+      }
+    }
+
     if (!datasetId) {
       output.write(
         `${formatSystemMessage("error", "No active dataset. Use /dataset <dataset-id> before asking questions.", theme)}\n`,
@@ -162,13 +202,14 @@ export async function runInteractiveSession(
   rl.close();
 }
 
-function renderHelp(theme: Theme): string {
+function renderHelp(theme: Theme, extraLines: string[] = []): string {
   const lines = [
     theme.style.accent("Commands:"),
     `  /help            ${theme.style.muted("Show this help")}`,
     `  /dataset <id>    ${theme.style.muted("Set active dataset")}`,
     `  /datasets        ${theme.style.muted("List ingested datasets")}`,
     `  /yolo on|off     ${theme.style.muted("Toggle approval bypass")}`,
+    ...extraLines.map((line) => `  ${line}`),
     `  /exit            ${theme.style.muted("Exit interactive mode")}`,
   ];
 

@@ -3,6 +3,11 @@ import duckdb from "duckdb";
 import type { DatasetManifest, DatasetTable } from "@dataclaw/shared";
 import { detectFileType, fileSize, listFilesRecursively, safeTableName } from "../utils/fs-utils.js";
 
+export interface DuckDbTableSchema {
+  name: string;
+  columns: Array<{ name: string; type: string }>;
+}
+
 export class DuckDbService {
   constructor(private readonly databasePath: string) {}
 
@@ -50,6 +55,69 @@ export class DuckDbService {
           resolve(lines.join("\n"));
         });
       });
+    } finally {
+      await this.close(db);
+    }
+  }
+
+  async queryRows(sql: string): Promise<Array<Record<string, unknown>>> {
+    const db = await this.connect();
+    try {
+      return await new Promise((resolve, reject) => {
+        db.all(sql, (error, rows) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(((rows ?? []) as Array<Record<string, unknown>>).map((row) => ({ ...row })));
+        });
+      });
+    } finally {
+      await this.close(db);
+    }
+  }
+
+  async execute(sql: string): Promise<void> {
+    const db = await this.connect();
+    try {
+      await this.exec(db, sql);
+    } finally {
+      await this.close(db);
+    }
+  }
+
+  async executeStatements(statements: string[]): Promise<void> {
+    const db = await this.connect();
+    try {
+      for (const statement of statements) {
+        await this.exec(db, statement);
+      }
+    } finally {
+      await this.close(db);
+    }
+  }
+
+  async getTableSchemas(tableNames: string[]): Promise<DuckDbTableSchema[]> {
+    const normalized = tableNames
+      .map((name) => name.trim())
+      .filter(Boolean);
+    if (!normalized.length) return [];
+
+    const db = await this.connect();
+    try {
+      const schemas: DuckDbTableSchema[] = [];
+      for (const tableName of normalized) {
+        const rows = await this.all<{ column_name: string; data_type: string }>(
+          db,
+          `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='main' AND table_name='${escapeSql(tableName)}' ORDER BY ordinal_position;`,
+        );
+        if (!rows.length) continue;
+        schemas.push({
+          name: tableName,
+          columns: rows.map((row) => ({ name: row.column_name, type: row.data_type })),
+        });
+      }
+      return schemas;
     } finally {
       await this.close(db);
     }

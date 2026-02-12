@@ -132,6 +132,26 @@ Inside Terminal UI, use:
 
 The interactive UI now uses styled panels and semantic colors, with automatic fallback to ASCII-safe rendering on limited terminals.
 
+## Web model app from CLI
+
+Build SQL model + TypeScript components:
+
+```bash
+npm exec dataclaw -- model build --dataset heptapod_titanic --tables passengers,survival_stats
+```
+
+Launch a local web app to visualize SQL-extracted data:
+
+```bash
+npm exec dataclaw -- model web --dataset heptapod_titanic
+```
+
+Or launch web immediately after build:
+
+```bash
+npm exec dataclaw -- model build --dataset heptapod_titanic --tables passengers,survival_stats --web --port 4173
+```
+
 ## 3. First complete workflow (5-10 minutes)
 
 ### 3.1 Discover remote datasets (interactive)
