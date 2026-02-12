@@ -39,15 +39,33 @@ Launch Terminal UI:
 $DC
 ```
 
-## 1) Minimum flow: search -> install -> query
+The interactive shell uses a styled banner, semantic status messages, and panel rendering with automatic ANSI/ASCII compatibility fallback.
+
+## 1) Minimum flow: discover -> inspect -> install -> query
 
 ```bash
-$DC dataset search "titanic" --file-type csv
+$DC dataset discover "titanic" --file-type csv --no-interactive
+$DC dataset inspect heptapod/titanic
 $DC dataset add heptapod/titanic
 $DC ask --dataset $DATASET --prompt "How many rows are there?"
 ```
 
-## 2) Search datasets with more precision
+## 2) Interactive discovery flow (single command)
+
+```bash
+$DC dataset discover "customer churn" --sort-by votes --file-type parquet
+```
+
+Inside discovery:
+
+- `open 1` to inspect ranked dataset #1
+- `install 1` to install ranked dataset #1
+- `next` / `prev` to paginate
+- `search <text>` to change query
+- `filters` to show active filters
+- `quit` to exit
+
+## 3) Search datasets with more precision (classic `dataset search`)
 
 ```bash
 $DC dataset search "sales forecast" --file-type csv
@@ -56,7 +74,7 @@ $DC dataset search "sales forecast" --file-type sqlite
 $DC dataset search "sales forecast" --page 3
 ```
 
-## 3) Install quickly from interactive ranking
+## 4) Install quickly from interactive ranking
 
 ```bash
 $DC dataset search "customer churn" --pick
@@ -74,7 +92,7 @@ You can answer with:
 - `owner/slug` to select by exact reference.
 - `Enter` to skip installation.
 
-## 4) Validate remote files before downloading
+## 5) Validate remote files before downloading
 
 ```bash
 $DC dataset files heptapod/titanic
@@ -82,7 +100,7 @@ $DC dataset files zillow/zecon
 $DC dataset files uciml/iris
 ```
 
-## 5) Work with multiple local datasets
+## 6) Work with multiple local datasets
 
 ```bash
 $DC dataset add uciml/iris
@@ -90,7 +108,7 @@ $DC dataset add zillow/zecon
 $DC dataset list
 ```
 
-## 6) Common analytical queries
+## 7) Common analytical queries
 
 ```bash
 $DC ask --dataset $DATASET --prompt "Count rows by Survived"
@@ -100,7 +118,7 @@ $DC ask --dataset $DATASET --prompt "Find null counts per column"
 $DC ask --dataset $DATASET --prompt "Show duplicates by Ticket"
 ```
 
-## 7) One-shot mode for scripts and pipelines
+## 8) One-shot mode for scripts and pipelines
 
 ```bash
 $DC --dataset $DATASET -p "Count rows by Pclass" --json > result.json
@@ -108,7 +126,7 @@ $DC --dataset $DATASET -p "Average fare by embarkation port" --json > fare_by_po
 $DC --dataset $DATASET -p "Top 20 highest fares" > top_fares.txt
 ```
 
-## 8) Interactive mode for exploration
+## 9) Interactive mode for exploration
 
 ```bash
 $DC
@@ -117,15 +135,15 @@ $DC
 Inside the session:
 
 ```text
-/datasets
-/dataset heptapod_titanic
-/yolo off
+dataclaw [dataset:none] [yolo:off] > /datasets
+dataclaw [dataset:none] [yolo:off] > /dataset heptapod_titanic
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /yolo off
 count passengers by sex
 show 10 random rows
 /exit
 ```
 
-## 9) Terminal UI walkthrough (step by step)
+## 10) Terminal UI walkthrough (step by step)
 
 Start Terminal UI:
 
@@ -136,21 +154,21 @@ $DC
 1) List datasets:
 
 ```text
-/datasets
+dataclaw [dataset:none] [yolo:off] > /datasets
 ```
 
 2) Activate one dataset:
 
 ```text
-/dataset heptapod_titanic
+dataclaw [dataset:none] [yolo:off] > /dataset heptapod_titanic
 ```
 
 3) Ask questions:
 
 ```text
-count rows by survived
-average fare by class
-show null counts per column
+dataclaw [dataset:heptapod_titanic] [yolo:off] > count rows by survived
+dataclaw [dataset:heptapod_titanic] [yolo:off] > average fare by class
+dataclaw [dataset:heptapod_titanic] [yolo:off] > show null counts per column
 ```
 
 4) Toggle approvals:
@@ -167,7 +185,7 @@ show null counts per column
 /exit
 ```
 
-## 10) Test approval-gated execution
+## 11) Test approval-gated execution
 
 ```bash
 $DC ask --dataset $DATASET --prompt "Create table tmp as select * from main_table limit 10"
@@ -181,7 +199,7 @@ If you want to skip confirmation for that execution:
 $DC ask --dataset $DATASET --prompt "Create table tmp as select * from main_table limit 10" --yolo
 ```
 
-## 11) Learning memory
+## 12) Learning memory
 
 Search memory:
 
@@ -197,7 +215,7 @@ $DC memory curate
 $DC memory curate --dataset $DATASET
 ```
 
-## 12) Scheduled runs (cron)
+## 13) Scheduled runs (cron)
 
 Daily example at 08:00:
 
@@ -205,7 +223,7 @@ Daily example at 08:00:
 0 8 * * * cd /path/to/dataclaw && npm exec dataclaw -- --dataset heptapod_titanic -p "Daily KPI summary" --json >> /path/to/dataclaw/.dataclaw/logs/cron.log 2>&1
 ```
 
-## 13) Quick troubleshooting examples
+## 14) Quick troubleshooting examples
 
 Kaggle credentials missing:
 

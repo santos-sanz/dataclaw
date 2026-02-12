@@ -5,10 +5,17 @@ import { Command } from "commander";
 import dotenv from "dotenv";
 import { runInteractiveSession } from "@dataclaw/tui";
 import type { DatasetManifest } from "@dataclaw/shared";
-import { DatasetService } from "../services/dataset-service.js";
+import {
+  DatasetService,
+  type DiscoverRemoteDatasetsOptions,
+  type RemoteDatasetDiscoveryResult,
+  type RemoteDatasetInspection,
+} from "../services/dataset-service.js";
 import type { RankedKaggleDataset } from "../services/dataset-search-ranking.js";
 import { AskService } from "../services/ask-service.js";
 import { MarkdownMemoryService } from "../services/memory-service.js";
+import { renderDatasetDiscovery } from "./dataset-discovery-render.js";
+import { renderDatasetInspection } from "./dataset-inspect-render.js";
 import { renderRankedDatasetSearch } from "./dataset-search-render.js";
 import { renderAskResult } from "./render.js";
 
@@ -20,11 +27,29 @@ interface DatasetSearchService {
   addDataset: (ownerSlug: string) => Promise<DatasetManifest>;
 }
 
+interface DatasetDiscoveryService {
+  discoverRemoteDatasets: (options: DiscoverRemoteDatasetsOptions) => Promise<RemoteDatasetDiscoveryResult>;
+  inspectRemoteDataset: (ref: string) => Promise<RemoteDatasetInspection>;
+  addDataset: (ownerSlug: string) => Promise<DatasetManifest>;
+}
+
 export interface DatasetSearchCommandOptions {
   fileType: string;
   page: string;
   raw: boolean;
   pick: boolean;
+}
+
+export interface DatasetDiscoverCommandOptions {
+  sortBy: "hottest" | "votes" | "updated" | "active" | "published";
+  fileType: string;
+  license: "all" | "cc" | "gpl" | "odb" | "other";
+  tags?: string;
+  user?: string;
+  minSize?: string;
+  maxSize?: string;
+  page: string;
+  interactive: boolean;
 }
 
 export interface DatasetSearchIo {
@@ -75,6 +100,29 @@ export function createProgram(cwd: string = process.cwd()): Command {
     .option("--pick", "Interactively pick a ranked dataset and install it", false)
     .action(async (query: string, opts: DatasetSearchCommandOptions) => {
       await runDatasetSearchCommand(datasetService, query, opts);
+    });
+
+  datasetCommand
+    .command("discover [query]")
+    .description("Interactively discover Kaggle datasets with rich inspect/install flow")
+    .option("--sort-by <sortBy>", "Sort results: hottest|votes|updated|active|published", "hottest")
+    .option("--file-type <type>", "Filter by file type: all|csv|sqlite|json|bigQuery|parquet", "all")
+    .option("--license <license>", "License filter: all|cc|gpl|odb|other", "all")
+    .option("--tags <tags>", "Comma-separated tags filter")
+    .option("--user <owner>", "Filter by owner username")
+    .option("--min-size <bytes>", "Minimum dataset size in bytes")
+    .option("--max-size <bytes>", "Maximum dataset size in bytes")
+    .option("--page <number>", "Initial result page", "1")
+    .option("--no-interactive", "Disable interactive navigation")
+    .action(async (query: string | undefined, opts: DatasetDiscoverCommandOptions) => {
+      await runDatasetDiscoverCommand(datasetService, query ?? "", opts);
+    });
+
+  datasetCommand
+    .command("inspect <ownerSlug>")
+    .description("Inspect a remote Kaggle dataset with metadata and file statistics")
+    .action(async (ownerSlug: string) => {
+      await runDatasetInspectCommand(datasetService, ownerSlug);
     });
 
   datasetCommand
@@ -158,6 +206,8 @@ export function createProgram(cwd: string = process.cwd()): Command {
     await runInteractiveSession({
       onAsk: (prompt, options) => askService.ask(options.datasetId, prompt, options.yolo),
       onListDatasets: async () => datasetService.listDatasets(),
+    }, {
+      compatibility: "auto",
     });
   });
 
@@ -211,6 +261,119 @@ export async function runDatasetSearchCommand(
   io.writeLine(`Tables: ${manifest.tables.map((table) => table.name).join(", ") || "(none)"}`);
 }
 
+export async function runDatasetInspectCommand(
+  datasetService: Pick<DatasetDiscoveryService, "inspectRemoteDataset">,
+  ownerSlug: string,
+  io: DatasetSearchIo = createDefaultDatasetSearchIo(),
+): Promise<void> {
+  const inspection = await datasetService.inspectRemoteDataset(ownerSlug);
+  io.writeLine(renderDatasetInspection(inspection));
+}
+
+export async function runDatasetDiscoverCommand(
+  datasetService: DatasetDiscoveryService,
+  query: string,
+  opts: DatasetDiscoverCommandOptions,
+  io: DatasetSearchIo = createDefaultDatasetSearchIo(),
+): Promise<void> {
+  if (opts.interactive && !io.isTTY) {
+    throw new Error("Interactive discovery requires a TTY. Use --no-interactive for one-shot output.");
+  }
+
+  const state = {
+    query: query.trim(),
+    page: parsePositiveInt(opts.page, 1),
+  };
+
+  const filters: DiscoverRemoteDatasetsOptions = {
+    sortBy: opts.sortBy ?? "hottest",
+    fileType: opts.fileType ?? "all",
+    licenseName: opts.license ?? "all",
+    tags: opts.tags?.trim() || undefined,
+    user: opts.user?.trim() || undefined,
+    minSize: parseOptionalNonNegativeInt("min-size", opts.minSize),
+    maxSize: parseOptionalNonNegativeInt("max-size", opts.maxSize),
+  };
+  if (Number.isFinite(filters.minSize) && Number.isFinite(filters.maxSize) && (filters.maxSize as number) < (filters.minSize as number)) {
+    throw new Error("--max-size must be greater than or equal to --min-size.");
+  }
+
+  while (true) {
+    const discovered = await datasetService.discoverRemoteDatasets({
+      ...filters,
+      query: state.query,
+      page: state.page,
+    });
+    io.writeLine(renderDatasetDiscovery(discovered));
+
+    if (!opts.interactive) return;
+
+    let needsRefresh = false;
+    while (!needsRefresh) {
+      const answer = (await io.prompt("discover> ")).trim();
+      if (!answer) continue;
+
+      if (answer === "quit" || answer === "exit") {
+        return;
+      }
+      if (answer === "help") {
+        io.writeLine(renderDatasetDiscoverHelp());
+        continue;
+      }
+      if (answer === "next") {
+        state.page += 1;
+        needsRefresh = true;
+        continue;
+      }
+      if (answer === "prev") {
+        state.page = Math.max(1, state.page - 1);
+        needsRefresh = true;
+        continue;
+      }
+      if (answer === "search") {
+        state.query = "";
+        state.page = 1;
+        needsRefresh = true;
+        continue;
+      }
+      if (answer.startsWith("search ")) {
+        state.query = answer.slice("search ".length).trim();
+        state.page = 1;
+        needsRefresh = true;
+        continue;
+      }
+      if (answer === "filters") {
+        io.writeLine(renderActiveDiscoverFilters(state.query, state.page, filters));
+        continue;
+      }
+      if (answer.startsWith("open ")) {
+        const inputText = answer.slice("open ".length).trim();
+        const selection = resolveDatasetPickSelection(inputText, discovered.results);
+        if (selection.kind !== "selected") {
+          io.writeLine(`Invalid selection '${inputText}'.`);
+          continue;
+        }
+        await runDatasetInspectCommand(datasetService, selection.dataset.ref, io);
+        continue;
+      }
+      if (answer.startsWith("install ")) {
+        const inputText = answer.slice("install ".length).trim();
+        const selection = resolveDatasetPickSelection(inputText, discovered.results);
+        if (selection.kind !== "selected") {
+          io.writeLine(`Invalid selection '${inputText}'.`);
+          continue;
+        }
+        const manifest = await datasetService.addDataset(selection.dataset.ref);
+        io.writeLine(`Dataset installed: ${manifest.id}`);
+        io.writeLine(`Tables: ${manifest.tables.map((table) => table.name).join(", ") || "(none)"}`);
+        continue;
+      }
+
+      io.writeLine("Unknown command. Use help, open, install, next, prev, search, filters, or quit.");
+    }
+  }
+}
+
 export function resolveDatasetPickSelection(
   inputText: string,
   ranked: RankedKaggleDataset[],
@@ -229,6 +392,51 @@ export function resolveDatasetPickSelection(
   if (direct) return { kind: "selected", dataset: direct };
 
   return { kind: "invalid" };
+}
+
+function renderDatasetDiscoverHelp(): string {
+  return [
+    "Discovery commands:",
+    "  open <rank|owner/slug>     Inspect dataset details",
+    "  install <rank|owner/slug>  Install selected dataset",
+    "  next                        Go to next result page",
+    "  prev                        Go to previous result page",
+    "  search <query>              Replace current search query",
+    "  search                      Reset to empty query",
+    "  filters                     Show active filters",
+    "  quit                        Exit discovery",
+  ].join("\n");
+}
+
+function renderActiveDiscoverFilters(query: string, page: number, filters: DiscoverRemoteDatasetsOptions): string {
+  const queryLabel = query ? `"${query}"` : "(empty)";
+  const parts = [
+    `query=${queryLabel}`,
+    `page=${page}`,
+    `sort=${filters.sortBy ?? "hottest"}`,
+    `type=${filters.fileType ?? "all"}`,
+    `license=${filters.licenseName ?? "all"}`,
+  ];
+  if (filters.tags) parts.push(`tags=${filters.tags}`);
+  if (filters.user) parts.push(`user=${filters.user}`);
+  if (Number.isFinite(filters.minSize)) parts.push(`min=${filters.minSize}`);
+  if (Number.isFinite(filters.maxSize)) parts.push(`max=${filters.maxSize}`);
+  return `Active filters: ${parts.join(" ")}`;
+}
+
+function parsePositiveInt(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function parseOptionalNonNegativeInt(name: string, value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid --${name} value '${value}'. Expected a non-negative integer.`);
+  }
+  return parsed;
 }
 
 function createDefaultDatasetSearchIo(): DatasetSearchIo {

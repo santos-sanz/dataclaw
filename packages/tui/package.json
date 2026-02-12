@@ -8,9 +8,13 @@
     "build": "tsc -b",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "typecheck": "tsc -b --pretty false",
-    "test": "node -e \"console.log('No tests for @dataclaw/tui')\""
+    "test": "node --test dist"
   },
   "dependencies": {
-    "@dataclaw/shared": "0.1.0"
+    "@dataclaw/shared": "0.1.0",
+    "boxen": "^8.0.1",
+    "chalk": "^5.6.2",
+    "ora": "^8.2.0",
+    "string-width": "^7.2.0"
   }
 }
