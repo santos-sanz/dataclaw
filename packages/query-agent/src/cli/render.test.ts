@@ -52,3 +52,57 @@ test("renderAskResult keeps plain text results without table coercion", () => {
   assert.match(output, /Execution canceled: command was rejected by approval gate\./);
   assert.doesNotMatch(output, /\|\s+-{3,}\s+\|/);
 });
+
+test("renderAskResult supports panel section style with Unicode borders", () => {
+  const output = renderAskResult(
+    buildSampleAskResult("status\tcount\nok\t10"),
+    {
+      useColor: false,
+      maxWidth: 80,
+      sectionStyle: "panel",
+      useUnicodeBorders: true,
+    },
+  );
+
+  assert.match(output, /┌/);
+  assert.match(output, /│ \[RESULT\]/);
+});
+
+test("renderAskResult supports panel section style with ASCII borders", () => {
+  const output = renderAskResult(
+    buildSampleAskResult("status\tcount\nok\t10"),
+    {
+      useColor: false,
+      maxWidth: 80,
+      sectionStyle: "panel",
+      useUnicodeBorders: false,
+    },
+  );
+
+  assert.match(output, /\+/);
+  assert.match(output, /\| \[RESULT\]/);
+  assert.doesNotMatch(output, /┌|┐|└|┘|│/);
+});
+
+test("renderAskResult keeps table lines constrained with long cell values", () => {
+  const output = renderAskResult(
+    buildSampleAskResult(
+      [
+        "id\tdescription\tvalue",
+        "1\tthis-is-a-very-long-description-value-that-should-be-truncated\t1000",
+      ].join("\n"),
+    ),
+    {
+      useColor: false,
+      maxWidth: 70,
+      maxColumnWidth: 18,
+    },
+  );
+
+  const tableLines = output
+    .split("\n")
+    .filter((line) => line.startsWith("| "));
+
+  assert.equal(tableLines.length > 0, true);
+  assert.equal(tableLines.every((line) => line.length <= 70), true);
+});

@@ -6,6 +6,8 @@ export interface AskRenderOptions {
   maxLearningItems?: number;
   maxLearningPreviewChars?: number;
   useColor?: boolean;
+  sectionStyle?: "classic" | "panel";
+  useUnicodeBorders?: boolean;
 }
 
 const MIN_SECTION_WIDTH = 60;
@@ -15,6 +17,7 @@ const DEFAULT_MAX_COLUMN_WIDTH = 28;
 const MIN_COLUMN_WIDTH = 8;
 const DEFAULT_MAX_LEARNING_ITEMS = 4;
 const DEFAULT_MAX_LEARNING_PREVIEW_CHARS = 160;
+const DEFAULT_SECTION_STYLE = "classic";
 
 const ANSI = {
   reset: "\u001b[0m",
@@ -29,6 +32,8 @@ export function renderAskResult(result: AskResult, options: AskRenderOptions = {
   const maxLearningItems = Math.max(1, options.maxLearningItems ?? DEFAULT_MAX_LEARNING_ITEMS);
   const maxLearningPreviewChars = Math.max(60, options.maxLearningPreviewChars ?? DEFAULT_MAX_LEARNING_PREVIEW_CHARS);
   const useColor = options.useColor ?? shouldUseColor();
+  const sectionStyle = options.sectionStyle ?? DEFAULT_SECTION_STYLE;
+  const useUnicodeBorders = options.useUnicodeBorders ?? shouldUseUnicodeBorders();
 
   const sections: string[] = [];
 
@@ -44,6 +49,8 @@ export function renderAskResult(result: AskResult, options: AskRenderOptions = {
       ],
       width,
       useColor,
+      sectionStyle,
+      useUnicodeBorders,
     ),
   );
 
@@ -53,6 +60,8 @@ export function renderAskResult(result: AskResult, options: AskRenderOptions = {
       renderCodeBlock(result.command, width),
       width,
       useColor,
+      sectionStyle,
+      useUnicodeBorders,
     ),
   );
 
@@ -62,6 +71,8 @@ export function renderAskResult(result: AskResult, options: AskRenderOptions = {
       renderQueryResult(result.result, { width, maxColumnWidth }),
       width,
       useColor,
+      sectionStyle,
+      useUnicodeBorders,
     ),
   );
 
@@ -71,6 +82,8 @@ export function renderAskResult(result: AskResult, options: AskRenderOptions = {
       wrapText(result.explanation, width),
       width,
       useColor,
+      sectionStyle,
+      useUnicodeBorders,
     ),
   );
 
@@ -80,6 +93,8 @@ export function renderAskResult(result: AskResult, options: AskRenderOptions = {
       result.sourceTables.length ? result.sourceTables.map((table) => `- ${table}`) : ["(none)"],
       width,
       useColor,
+      sectionStyle,
+      useUnicodeBorders,
     ),
   );
 
@@ -89,17 +104,64 @@ export function renderAskResult(result: AskResult, options: AskRenderOptions = {
       renderLearnings(result.learningsUsed, { maxItems: maxLearningItems, maxPreviewChars: maxLearningPreviewChars, width }),
       width,
       useColor,
+      sectionStyle,
+      useUnicodeBorders,
     ),
   );
 
   return sections.join("\n\n");
 }
 
-function renderSection(title: string, lines: string[], width: number, useColor: boolean): string {
+function renderSection(
+  title: string,
+  lines: string[],
+  width: number,
+  useColor: boolean,
+  sectionStyle: "classic" | "panel",
+  useUnicodeBorders: boolean,
+): string {
+  if (sectionStyle === "panel") {
+    return renderPanelSection(title, lines, width, useColor, useUnicodeBorders);
+  }
+
   const border = colorize("=".repeat(width), "dim", useColor);
   const label = colorize(`[${title}]`, "cyan", useColor);
   const body = lines.length ? lines.join("\n") : "(none)";
   return [border, label, body].join("\n");
+}
+
+function renderPanelSection(
+  title: string,
+  lines: string[],
+  width: number,
+  useColor: boolean,
+  useUnicodeBorders: boolean,
+): string {
+  const borderChars = useUnicodeBorders
+    ? { h: "─", v: "│", tl: "┌", tr: "┐", bl: "└", br: "┘" }
+    : { h: "-", v: "|", tl: "+", tr: "+", bl: "+", br: "+" };
+
+  const top = colorize(`${borderChars.tl}${borderChars.h.repeat(width + 2)}${borderChars.tr}`, "dim", useColor);
+  const bottom = colorize(`${borderChars.bl}${borderChars.h.repeat(width + 2)}${borderChars.br}`, "dim", useColor);
+  const heading = renderPanelRow(`[${title}]`, width, useColor, "cyan", borderChars.v);
+  const bodyRows = (lines.length ? lines : ["(none)"]).map((line) => renderPanelRow(line, width, useColor, "dim", borderChars.v));
+
+  return [top, heading, ...bodyRows, bottom].join("\n");
+}
+
+function renderPanelRow(
+  line: string,
+  width: number,
+  useColor: boolean,
+  tone: "cyan" | "dim",
+  verticalBorder: string,
+): string {
+  const normalized = truncate(line, width, "...");
+  const padded = normalized.padEnd(width, " ");
+  const leftBorder = colorize(verticalBorder, "dim", useColor);
+  const rightBorder = colorize(verticalBorder, "dim", useColor);
+  const content = colorize(padded, tone, useColor);
+  return `${leftBorder} ${content} ${rightBorder}`;
 }
 
 function renderCodeBlock(text: string, width: number): string[] {
@@ -286,6 +348,11 @@ function shouldUseColor(): boolean {
   if (!process.stdout.isTTY) return false;
   if ("NO_COLOR" in process.env) return false;
   return true;
+}
+
+function shouldUseUnicodeBorders(): boolean {
+  if (!process.stdout.isTTY) return false;
+  return (process.env.TERM ?? "").toLowerCase() !== "dumb";
 }
 
 function colorize(text: string, tone: "cyan" | "dim", useColor: boolean): string {

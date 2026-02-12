@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   deriveFormatsFromDatasetFiles,
+  parseKaggleDatasetMetadataJson,
   parseKaggleDatasetSearchCsv,
   rankKaggleDatasets,
+  toMetadataSummary,
 } from "./dataset-search-ranking.js";
 
 test("parseKaggleDatasetSearchCsv parses quoted titles with commas", () => {
@@ -20,6 +22,18 @@ test("parseKaggleDatasetSearchCsv parses quoted titles with commas", () => {
   assert.equal(parsed[0].downloadCount, 150);
   assert.equal(parsed[0].voteCount, 30);
   assert.equal(parsed[0].usabilityRating, 0.9);
+});
+
+test("parseKaggleDatasetSearchCsv ignores prefixed non-csv lines", () => {
+  const csv = [
+    "Next Page Token = abc123",
+    "ref,title,size,lastUpdated,downloadCount,voteCount,usabilityRating",
+    "owner/ds,Dataset,1024,2025-01-01T00:00:00Z,1,2,0.3",
+  ].join("\n");
+
+  const parsed = parseKaggleDatasetSearchCsv(csv);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].ref, "owner/ds");
 });
 
 test("rankKaggleDatasets sorts by quality and deterministic tie-breakers", () => {
@@ -101,4 +115,43 @@ test("deriveFormatsFromDatasetFiles prioritizes by frequency then format priorit
 test("deriveFormatsFromDatasetFiles falls back to unknown for empty input", () => {
   const formats = deriveFormatsFromDatasetFiles([]);
   assert.deepEqual(formats, ["unknown"]);
+});
+
+test("parseKaggleDatasetMetadataJson extracts normalized metadata detail", () => {
+  const payload = {
+    info: {
+      ownerUser: "owner",
+      datasetSlug: "sample-ds",
+      title: "Sample Dataset",
+      subtitle: "A compact subtitle",
+      description: "First line.\nSecond line.",
+      totalBytes: 12345,
+      lastUpdated: "2026-01-01T00:00:00Z",
+      licenses: [{ name: "CC0-1.0" }],
+      keywords: [{ name: "finance" }, { id: "timeseries" }],
+    },
+  };
+
+  const parsed = parseKaggleDatasetMetadataJson(payload);
+  assert.ok(parsed);
+  assert.equal(parsed.ref, "owner/sample-ds");
+  assert.equal(parsed.title, "Sample Dataset");
+  assert.deepEqual(parsed.licenses, ["CC0-1.0"]);
+  assert.deepEqual(parsed.tags, ["finance", "timeseries"]);
+});
+
+test("toMetadataSummary truncates long descriptions", () => {
+  const summary = toMetadataSummary(
+    {
+      ref: "owner/sample",
+      title: "Sample",
+      description: "a".repeat(200),
+      licenses: [],
+      tags: [],
+      totalBytes: null,
+    },
+    { descriptionSnippetMaxLength: 20 },
+  );
+
+  assert.equal(summary.descriptionSnippet, "aaaaaaaaaaaaaaaaa...");
 });

@@ -1,5 +1,27 @@
 export type RankedDatasetFormat = "csv" | "parquet" | "sqlite" | "json" | "bigquery" | "other" | "unknown";
 
+export interface RemoteDatasetMetadataSummary {
+  ref: string;
+  title: string;
+  subtitle?: string;
+  descriptionSnippet?: string;
+  licenses: string[];
+  tags: string[];
+}
+
+export interface RemoteDatasetMetadataDetail {
+  ref: string;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  licenses: string[];
+  tags: string[];
+  owner?: string;
+  datasetSlug?: string;
+  totalBytes: number | null;
+  lastUpdated?: string;
+}
+
 export interface KaggleDatasetSearchRow {
   ref: string;
   title: string;
@@ -20,6 +42,8 @@ export interface RankedKaggleDataset {
   rank: number;
   ref: string;
   title: string;
+  summary?: string;
+  fileCount?: number;
   totalBytes: number | null;
   lastUpdated: string;
   downloadCount: number;
@@ -57,7 +81,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const FORMAT_PRIORITY: RankedDatasetFormat[] = ["csv", "parquet", "json", "sqlite", "bigquery", "other", "unknown"];
 
 export function parseKaggleDatasetSearchCsv(csv: string): KaggleDatasetSearchRow[] {
-  const rows = parseCsvRecords(csv);
+  const rows = parseCsvRecords(csv, ["ref", "title"]);
   return rows
     .map((row) => {
       const ref = readField(row, ["ref"]);
@@ -76,7 +100,7 @@ export function parseKaggleDatasetSearchCsv(csv: string): KaggleDatasetSearchRow
 }
 
 export function parseKaggleDatasetFilesCsv(csv: string): KaggleDatasetFileRow[] {
-  const rows = parseCsvRecords(csv);
+  const rows = parseCsvRecords(csv, ["name"]);
   return rows
     .map((row) => {
       const name = readField(row, ["name"]);
@@ -185,12 +209,72 @@ export function normalizeDatasetFormatToken(value: string): RankedDatasetFormat 
   return "other";
 }
 
-function parseCsvRecords(csv: string): Array<Record<string, string>> {
+export function parseKaggleDatasetMetadataJson(
+  input: unknown,
+  opts: { fallbackRef?: string; descriptionSnippetMaxLength?: number } = {},
+): RemoteDatasetMetadataDetail | null {
+  const root = asRecord(input);
+  if (!root) return null;
+  const info = asRecord(root.info) ?? root;
+
+  const owner = readString(info, ["ownerUser", "ownerSlug", "owner"]);
+  const datasetSlug = readString(info, ["datasetSlug", "slug"]);
+  const ref = readString(info, ["ref", "id"]) ?? (owner && datasetSlug ? `${owner}/${datasetSlug}` : opts.fallbackRef ?? "");
+  const title = readString(info, ["title"]) ?? ref;
+
+  if (!ref || !title) return null;
+
+  const description = readString(info, ["description"]);
+  const subtitle = readString(info, ["subtitle"]);
+  const totalBytes = parseOptionalNumber(readString(info, ["totalBytes", "size"]));
+  const lastUpdated = readString(info, ["lastUpdated", "updateTime", "lastUpdateTime"]);
+  const licenses = readLicenseNames(info.licenses);
+  const tags = readKeywordNames(info.keywords);
+
+  return {
+    ref,
+    title,
+    subtitle,
+    description,
+    licenses,
+    tags,
+    owner,
+    datasetSlug,
+    totalBytes,
+    lastUpdated,
+  };
+}
+
+export function toMetadataSummary(
+  detail: RemoteDatasetMetadataDetail,
+  opts: { descriptionSnippetMaxLength?: number } = {},
+): RemoteDatasetMetadataSummary {
+  const max = opts.descriptionSnippetMaxLength ?? 140;
+  const descriptionSnippet = summarizeText(detail.description, max);
+
+  return {
+    ref: detail.ref,
+    title: detail.title,
+    subtitle: detail.subtitle,
+    descriptionSnippet,
+    licenses: detail.licenses,
+    tags: detail.tags,
+  };
+}
+
+function parseCsvRecords(csv: string, requiredHeaders: string[]): Array<Record<string, string>> {
   const matrix = parseCsvMatrix(csv);
   if (matrix.length === 0) return [];
 
-  const header = matrix[0].map((column) => normalizeHeader(column));
-  const rows = matrix.slice(1);
+  const required = requiredHeaders.map((value) => normalizeHeader(value));
+  const headerIndex = matrix.findIndex((row) => {
+    const normalized = row.map((column) => normalizeHeader(column));
+    return required.every((field) => normalized.includes(field));
+  });
+  if (headerIndex === -1) return [];
+
+  const header = matrix[headerIndex].map((column) => normalizeHeader(column));
+  const rows = matrix.slice(headerIndex + 1);
 
   return rows
     .filter((row) => row.some((cell) => cell.trim() !== ""))
@@ -270,6 +354,59 @@ function readField(record: Record<string, string>, keys: string[]): string | und
   return undefined;
 }
 
+function readString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const direct = record[key];
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+  }
+  return undefined;
+}
+
+function readLicenseNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const output: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && item.trim()) {
+      output.push(item.trim());
+      continue;
+    }
+    const record = asRecord(item);
+    if (!record) continue;
+    const name = readString(record, ["name"]);
+    if (name) output.push(name);
+  }
+  return unique(output);
+}
+
+function readKeywordNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const output: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && item.trim()) {
+      output.push(item.trim());
+      continue;
+    }
+    const record = asRecord(item);
+    if (!record) continue;
+    const name = readString(record, ["name", "id"]);
+    if (name) output.push(name);
+  }
+  return unique(output);
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function summarizeText(value: string | undefined, maxLength: number): string | undefined {
+  if (!value) return undefined;
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return undefined;
+  if (compact.length <= maxLength) return compact;
+  if (maxLength <= 3) return compact.slice(0, maxLength);
+  return `${compact.slice(0, maxLength - 3)}...`;
+}
+
 function parseOptionalNumber(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Number.parseFloat(value);
@@ -280,6 +417,10 @@ function parseCount(value: string | undefined): number {
   const parsed = parseOptionalNumber(value);
   if (parsed === null || parsed < 0) return 0;
   return Math.floor(parsed);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
 function normalizeUsability(raw: number | null): number {

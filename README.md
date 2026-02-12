@@ -130,15 +130,44 @@ Inside Terminal UI, use:
 - `/help` to view all commands
 - `/exit` to close the session
 
+The interactive UI now uses styled panels and semantic colors, with automatic fallback to ASCII-safe rendering on limited terminals.
+
 ## 3. First complete workflow (5-10 minutes)
 
-### 3.1 Search remote datasets
+### 3.1 Discover remote datasets (interactive)
+
+```bash
+npm exec dataclaw -- dataset discover "titanic" --file-type csv
+```
+
+Interactive discovery commands:
+
+- `open <rank|owner/slug>` for rich dataset detail
+- `install <rank|owner/slug>` to install in one step
+- `next` / `prev` for pagination
+- `search <text>` to refine query
+- `filters` to print active filters
+- `quit` to exit discovery
+
+For one-shot discovery output (no prompt loop):
+
+```bash
+npm exec dataclaw -- dataset discover "titanic" --no-interactive
+```
+
+### 3.2 Search remote datasets (classic)
 
 ```bash
 npm exec dataclaw -- dataset search "titanic" --file-type csv
 ```
 
-### 3.2 Install a dataset locally
+### 3.3 Inspect one dataset in depth
+
+```bash
+npm exec dataclaw -- dataset inspect heptapod/titanic
+```
+
+### 3.4 Install a dataset locally
 
 ```bash
 npm exec dataclaw -- dataset add heptapod/titanic
@@ -147,25 +176,25 @@ npm exec dataclaw -- dataset add heptapod/titanic
 Note: `owner/slug` is converted to a local id as `owner_slug`.  
 Example: `heptapod/titanic` -> `heptapod_titanic`.
 
-### 3.3 List local datasets
+### 3.5 List local datasets
 
 ```bash
 npm exec dataclaw -- dataset list
 ```
 
-### 3.4 Run your first question
+### 3.6 Run your first question
 
 ```bash
 npm exec dataclaw -- ask --dataset heptapod_titanic --prompt "How many rows are there?"
 ```
 
-### 3.5 JSON output mode (for pipelines)
+### 3.7 JSON output mode (for pipelines)
 
 ```bash
 npm exec dataclaw -- --dataset heptapod_titanic -p "Count rows by Survived" --json
 ```
 
-### 3.6 Example execution output
+### 3.8 Example execution output
 
 Example of a real query run against a local dataset:
 
@@ -181,7 +210,31 @@ DC="npm exec dataclaw --"
 
 Then use `$DC` in all commands below.
 
-### 4.1 `dataset search`
+### 4.1 `dataset discover [query]`
+
+Interactive discovery + inspect + install in one flow.
+
+Examples:
+
+```bash
+$DC dataset discover "customer churn"
+$DC dataset discover "customer churn" --file-type parquet --sort-by votes
+$DC dataset discover "credit risk" --license cc --min-size 1000000
+$DC dataset discover --user zillow --page 2
+$DC dataset discover "geospatial" --no-interactive
+```
+
+### 4.2 `dataset inspect <owner/slug>`
+
+Inspect one remote dataset with metadata and file statistics:
+
+```bash
+$DC dataset inspect heptapod/titanic
+$DC dataset inspect zillow/zecon
+$DC dataset inspect allen-institute-for-ai/CORD-19-research-challenge
+```
+
+### 4.3 `dataset search`
 
 Searches Kaggle and returns a quality-ranked table.
 
@@ -204,7 +257,7 @@ Notes:
 - `--pick` opens an interactive picker and installs the selected result.
 - `--raw` and `--pick` cannot be combined.
 
-### 4.2 `dataset files <owner/slug>`
+### 4.4 `dataset files <owner/slug>`
 
 Inspect remote files before downloading:
 
@@ -214,7 +267,7 @@ $DC dataset files zillow/zecon
 $DC dataset files allen-institute-for-ai/CORD-19-research-challenge
 ```
 
-### 4.3 `dataset add <owner/slug>`
+### 4.5 `dataset add <owner/slug>`
 
 Download + ingest into DuckDB + create `manifest.json`:
 
@@ -224,7 +277,7 @@ $DC dataset add zillow/zecon
 $DC dataset add uciml/iris
 ```
 
-### 4.4 `dataset list`
+### 4.6 `dataset list`
 
 List locally ingested datasets:
 
@@ -232,7 +285,7 @@ List locally ingested datasets:
 $DC dataset list
 ```
 
-### 4.5 `ask --dataset ... --prompt ...`
+### 4.7 `ask --dataset ... --prompt ...`
 
 Ask questions against a local dataset:
 
@@ -244,7 +297,7 @@ $DC ask --dataset heptapod_titanic --prompt "Top 10 fares with passenger name"
 $DC ask --dataset heptapod_titanic --prompt "Show null counts per column"
 ```
 
-### 4.6 One-shot mode with global flags (`-p` / `--dataset` / `--json`)
+### 4.8 One-shot mode with global flags (`-p` / `--dataset` / `--json`)
 
 Useful for scripts and automation:
 
@@ -255,7 +308,7 @@ $DC --dataset heptapod_titanic -p "Find duplicate passengers by ticket"
 $DC --dataset heptapod_titanic -p "Return 20 random rows"
 ```
 
-### 4.7 Approvals and `--yolo`
+### 4.9 Approvals and `--yolo`
 
 If a query is mutating (`CREATE`, `UPDATE`, `DELETE`, etc.), DataClaw asks for confirmation:
 
@@ -275,7 +328,7 @@ Global one-shot also supports it:
 $DC --dataset heptapod_titanic -p "Create table tmp as select * from main_table limit 10" --yolo
 ```
 
-### 4.8 Memory (`memory search` and `memory curate`)
+### 4.10 Memory (`memory search` and `memory curate`)
 
 Search stored learnings:
 
@@ -312,16 +365,16 @@ Available interactive commands:
 Session example:
 
 ```text
-dataclaw> /datasets
+dataclaw [dataset:none] [yolo:off] > /datasets
 heptapod_titanic
 
-dataclaw> /dataset heptapod_titanic
-Active dataset set to: heptapod_titanic
+dataclaw [dataset:none] [yolo:off] > /dataset heptapod_titanic
+✓ Active dataset set to: heptapod_titanic
 
-dataclaw(heptapod_titanic)> count rows by survived
+dataclaw [dataset:heptapod_titanic] [yolo:off] > count rows by survived
 ...result...
 
-dataclaw(heptapod_titanic)> /exit
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /exit
 ```
 
 ## 6. Where DataClaw stores files
