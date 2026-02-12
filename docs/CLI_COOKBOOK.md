@@ -33,6 +33,12 @@ Launch in one-shot JSON mode:
 $DC --dataset $DATASET -p "Count rows by Survived" --json
 ```
 
+If a default dataset was already selected, `--dataset` can be omitted:
+
+```bash
+$DC -p "Count rows by Survived" --json
+```
+
 Launch Terminal UI:
 
 ```bash
@@ -108,6 +114,8 @@ $DC dataset add zillow/zecon
 $DC dataset list
 ```
 
+The most recently selected/installed dataset is persisted per project in `.dataclaw/session.json` and reused as the default dataset in new sessions.
+
 ## 7) Common analytical queries
 
 ```bash
@@ -118,12 +126,24 @@ $DC ask --dataset $DATASET --prompt "Find null counts per column"
 $DC ask --dataset $DATASET --prompt "Show duplicates by Ticket"
 ```
 
+With a persisted default dataset:
+
+```bash
+$DC ask --prompt "Count rows by Survived"
+```
+
 ## 8) One-shot mode for scripts and pipelines
 
 ```bash
 $DC --dataset $DATASET -p "Count rows by Pclass" --json > result.json
 $DC --dataset $DATASET -p "Average fare by embarkation port" --json > fare_by_port.json
 $DC --dataset $DATASET -p "Top 20 highest fares" > top_fares.txt
+```
+
+With a persisted default dataset:
+
+```bash
+$DC -p "Top 20 highest fares" > top_fares.txt
 ```
 
 ## 9) Interactive mode for exploration
@@ -137,6 +157,9 @@ Inside the session:
 ```text
 dataclaw [dataset:none] [yolo:off] > /datasets
 dataclaw [dataset:none] [yolo:off] > /dataset heptapod_titanic
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /dataset search "customer churn" --file-type csv
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /dataset open 1
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /dataset add 1
 dataclaw [dataset:heptapod_titanic] [yolo:off] > /yolo off
 count passengers by sex
 show 10 random rows
@@ -163,7 +186,15 @@ dataclaw [dataset:none] [yolo:off] > /datasets
 dataclaw [dataset:none] [yolo:off] > /dataset heptapod_titanic
 ```
 
-3) Ask questions:
+3) Search and inspect Kaggle datasets from TUI:
+
+```text
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /dataset search "credit risk" --file-type parquet
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /dataset open 1
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /dataset add 1
+```
+
+4) Ask questions:
 
 ```text
 dataclaw [dataset:heptapod_titanic] [yolo:off] > count rows by survived
@@ -171,14 +202,14 @@ dataclaw [dataset:heptapod_titanic] [yolo:off] > average fare by class
 dataclaw [dataset:heptapod_titanic] [yolo:off] > show null counts per column
 ```
 
-4) Toggle approvals:
+5) Toggle approvals:
 
 ```text
 /yolo on
 /yolo off
 ```
 
-5) Show help and exit:
+6) Show help and exit:
 
 ```text
 /help

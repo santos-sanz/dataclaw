@@ -16,6 +16,7 @@ export interface InteractiveSessionOptions {
   compatibility?: CompatibilityMode;
   bannerLines?: string[];
   helpLines?: string[];
+  initialDatasetId?: string;
 }
 
 export interface PromptRenderState {
@@ -92,7 +93,7 @@ export async function runInteractiveSession(
   options: InteractiveSessionOptions = {},
 ): Promise<void> {
   const rl = readline.createInterface({ input, output });
-  let datasetId = "";
+  let datasetId = options.initialDatasetId?.trim() ?? "";
   let yolo = false;
 
   const theme = buildTheme(
@@ -109,6 +110,32 @@ export async function runInteractiveSession(
   while (true) {
     const raw = (await rl.question(renderPrompt({ datasetId, yolo }, theme))).trim();
     if (!raw) continue;
+
+    if (handlers.onCommand) {
+      try {
+        const handled = await handlers.onCommand(raw, {
+          datasetId,
+          yolo,
+          isTTY: Boolean(input.isTTY && output.isTTY),
+          setDatasetId: (value) => {
+            datasetId = value;
+          },
+          setYolo: (value) => {
+            yolo = value;
+          },
+          writeLine: (line) => {
+            output.write(`${line}\n`);
+          },
+          prompt: (message) => rl.question(message),
+        });
+        if (handled) continue;
+      } catch (error) {
+        output.write(
+          `${formatSystemMessage("error", `Error: ${error instanceof Error ? error.message : String(error)}`, theme)}\n`,
+        );
+        continue;
+      }
+    }
 
     if (raw === "/exit" || raw === "/quit") {
       break;
@@ -146,32 +173,6 @@ export async function runInteractiveSession(
       yolo = false;
       output.write(`${formatSystemMessage("info", "YOLO mode disabled.", theme)}\n`);
       continue;
-    }
-
-    if (handlers.onCommand) {
-      try {
-        const handled = await handlers.onCommand(raw, {
-          datasetId,
-          yolo,
-          isTTY: Boolean(input.isTTY && output.isTTY),
-          setDatasetId: (value) => {
-            datasetId = value;
-          },
-          setYolo: (value) => {
-            yolo = value;
-          },
-          writeLine: (line) => {
-            output.write(`${line}\n`);
-          },
-          prompt: (message) => rl.question(message),
-        });
-        if (handled) continue;
-      } catch (error) {
-        output.write(
-          `${formatSystemMessage("error", `Error: ${error instanceof Error ? error.message : String(error)}`, theme)}\n`,
-        );
-        continue;
-      }
     }
 
     if (!datasetId) {

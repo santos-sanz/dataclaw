@@ -122,3 +122,63 @@ test("inspectRemoteDataset returns metadata and file statistics", async () => {
     assert.equal(inspection.files[0].format.length > 0, true);
   });
 });
+
+test("discoverRemoteDatasets applies LLM rerank and insight fields when available", async () => {
+  await withTempCwd(async (cwd) => {
+    const fakeKaggle = {
+      searchDatasetsParsed: async () => [
+        {
+          ref: "owner/a",
+          title: "Dataset A",
+          totalBytes: 100,
+          lastUpdated: "2026-01-01T00:00:00Z",
+          downloadCount: 10,
+          voteCount: 5,
+          usabilityRating: 0.8,
+        },
+        {
+          ref: "owner/b",
+          title: "Dataset B",
+          totalBytes: 100,
+          lastUpdated: "2026-01-01T00:00:00Z",
+          downloadCount: 9,
+          voteCount: 4,
+          usabilityRating: 0.7,
+        },
+      ],
+      listAllFilesParsed: async () => ({
+        files: [{ name: "part.csv", totalBytes: 10, creationDate: "2026-01-01T00:00:00Z" }],
+        truncated: false,
+        pagesFetched: 1,
+      }),
+      downloadDatasetMetadataJson: async () => ({
+        info: {
+          ownerUser: "owner",
+          datasetSlug: "sample",
+          title: "Sample Dataset",
+          subtitle: "Short subtitle",
+        },
+      }),
+    };
+
+    const fakeLlm = {
+      enrich: async () => ({
+        rerankedRefs: ["owner/b", "owner/a"],
+        insightsByRef: {
+          "owner/a": {
+            llmSummary: "LLM summary for dataset A",
+            llmUseCases: ["forecasting"],
+          },
+        },
+      }),
+    };
+
+    const service = new DatasetService(cwd, fakeKaggle as never, fakeLlm as never);
+    const discovered = await service.discoverRemoteDatasets({ query: "sample", page: 1, fileType: "csv" });
+
+    assert.equal(discovered.results[0]?.ref, "owner/b");
+    assert.equal(discovered.results[1]?.ref, "owner/a");
+    assert.equal(discovered.results[1]?.llmSummary, "LLM summary for dataset A");
+    assert.deepEqual(discovered.results[1]?.llmUseCases, ["forecasting"]);
+  });
+});

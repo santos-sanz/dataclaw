@@ -70,3 +70,20 @@ test("NO_COLOR disables ANSI color output", () => {
   assert.equal(theme.context.useColor, false);
   assert.equal(ANSI_PATTERN.test(prompt), false);
 });
+
+test("renderPrompt truncates long dataset labels to keep prompt readable", () => {
+  const theme = buildTheme(
+    resolveThemeContext({
+      compatibility: "unicode",
+      isTTY: true,
+      columns: 50,
+      env: { TERM: "xterm-256color" },
+    }),
+  );
+
+  const prompt = renderPrompt({ datasetId: "very_long_dataset_identifier_with_many_characters", yolo: false }, theme);
+  const plainPrompt = prompt.replaceAll(ANSI_PATTERN_GLOBAL, "");
+
+  assert.equal(plainPrompt.includes("..."), true);
+  assert.equal(plainPrompt.includes("yolo:off"), true);
+});

@@ -116,6 +116,12 @@ Use JSON output when integrating with scripts:
 npm exec dataclaw -- --dataset heptapod_titanic -p "Count rows by Survived" --json
 ```
 
+If a default dataset was previously selected, `--dataset` is optional in one-shot mode:
+
+```bash
+npm exec dataclaw -- -p "Count rows by Survived"
+```
+
 Launch Terminal UI (interactive REPL):
 
 ```bash
@@ -125,10 +131,20 @@ npm exec dataclaw --
 Inside Terminal UI, use:
 
 - `/datasets` to list local datasets
-- `/dataset <id>` to set active dataset
+- `/dataset <id>` to set active dataset (persisted as default)
+- `/dataset search <query>` to search Kaggle datasets from TUI
+- `/dataset open <rank|owner/slug>` to inspect full dataset details
+- `/dataset add <rank|owner/slug>` to install and activate a dataset
+- `/dataset next` / `/dataset prev` to paginate last search
 - `/yolo on|off` to toggle approval bypass
 - `/help` to view all commands
 - `/exit` to close the session
+
+Default dataset persistence:
+
+- Stored per-project at `.dataclaw/session.json`
+- Reused automatically across restarts
+- Used as fallback for `ask` and one-shot `-p` when `--dataset` is omitted
 
 The interactive UI now uses styled panels and semantic colors, with automatic fallback to ASCII-safe rendering on limited terminals.
 
@@ -317,6 +333,12 @@ $DC ask --dataset heptapod_titanic --prompt "Top 10 fares with passenger name"
 $DC ask --dataset heptapod_titanic --prompt "Show null counts per column"
 ```
 
+When a default dataset exists, `--dataset` is optional:
+
+```bash
+$DC ask --prompt "How many rows are there?"
+```
+
 ### 4.8 One-shot mode with global flags (`-p` / `--dataset` / `--json`)
 
 Useful for scripts and automation:
@@ -326,6 +348,12 @@ $DC --dataset heptapod_titanic -p "Count rows"
 $DC --dataset heptapod_titanic -p "Count rows by Pclass" --json
 $DC --dataset heptapod_titanic -p "Find duplicate passengers by ticket"
 $DC --dataset heptapod_titanic -p "Return 20 random rows"
+```
+
+If a default dataset is configured, this also works:
+
+```bash
+$DC -p "Return 20 random rows"
 ```
 
 ### 4.9 Approvals and `--yolo`
@@ -377,6 +405,13 @@ Available interactive commands:
 
 - `/help`
 - `/dataset <id>`
+- `/dataset help`
+- `/dataset search <query>`
+- `/dataset open <rank|owner/slug>`
+- `/dataset add <rank|owner/slug>`
+- `/dataset next`
+- `/dataset prev`
+- `/dataset filters`
 - `/datasets`
 - `/yolo on`
 - `/yolo off`
@@ -390,6 +425,12 @@ heptapod_titanic
 
 dataclaw [dataset:none] [yolo:off] > /dataset heptapod_titanic
 ✓ Active dataset set to: heptapod_titanic
+
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /dataset search "customer churn" --file-type csv
+...ranked results...
+
+dataclaw [dataset:heptapod_titanic] [yolo:off] > /dataset open 1
+...full metadata + file stats + optional LLM insights...
 
 dataclaw [dataset:heptapod_titanic] [yolo:off] > count rows by survived
 ...result...
@@ -405,6 +446,7 @@ Main structure:
 .
 ├── MEMORY.md
 └── .dataclaw/
+    ├── session.json
     ├── datasets/
     │   └── <dataset_id>/
     │       ├── raw/

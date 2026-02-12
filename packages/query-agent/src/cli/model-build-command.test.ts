@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ModelBuildResult } from "@dataclaw/shared";
-import { normalizeInteractiveModelInput, runModelBuildCommand, runModelWebCommand } from "./program.js";
+import {
+  normalizeInteractiveDatasetInput,
+  normalizeInteractiveModelInput,
+  runModelBuildCommand,
+  runModelWebCommand,
+} from "./program.js";
 
 function createResult(): ModelBuildResult {
   return {
@@ -229,4 +234,12 @@ test("normalizeInteractiveModelInput accepts slash and dataclaw-prefixed model c
   assert.equal(normalizeInteractiveModelInput("dataclaw model web --port 4200"), "model web --port 4200");
   assert.equal(normalizeInteractiveModelInput("model help"), "model help");
   assert.equal(normalizeInteractiveModelInput("count rows by class"), null);
+});
+
+test("normalizeInteractiveDatasetInput accepts slash and dataclaw-prefixed dataset commands", () => {
+  assert.equal(normalizeInteractiveDatasetInput("/dataset search titanic"), "dataset search titanic");
+  assert.equal(normalizeInteractiveDatasetInput("dataclaw dataset open 1"), "dataset open 1");
+  assert.equal(normalizeInteractiveDatasetInput("dataset help"), "dataset help");
+  assert.equal(normalizeInteractiveDatasetInput("/datasets"), null);
+  assert.equal(normalizeInteractiveDatasetInput("count rows by class"), null);
 });

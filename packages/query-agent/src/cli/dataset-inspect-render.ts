@@ -4,7 +4,7 @@ export function renderDatasetInspection(
   inspection: RemoteDatasetInspection,
   opts: { maxDescriptionLength?: number } = {},
 ): string {
-  const maxDescriptionLength = opts.maxDescriptionLength ?? 500;
+  const maxDescriptionLength = opts.maxDescriptionLength ?? 1200;
   const lines: string[] = [];
 
   lines.push(`Dataset: ${inspection.ref}`);
@@ -25,6 +25,29 @@ export function renderDatasetInspection(
   lines.push(`Licenses: ${inspection.licenses.length ? inspection.licenses.join(", ") : "n/a"}`);
   lines.push(`Tags: ${inspection.tags.length ? inspection.tags.join(", ") : "n/a"}`);
   lines.push("");
+
+  if (inspection.llmSummary || inspection.llmRationale || inspection.llmUseCases?.length || inspection.llmCaveats?.length) {
+    lines.push("LLM insights:");
+    if (inspection.llmSummary) {
+      lines.push(`  Summary: ${inspection.llmSummary}`);
+    }
+    if (inspection.llmRationale) {
+      lines.push(`  Rationale: ${inspection.llmRationale}`);
+    }
+    if (inspection.llmUseCases?.length) {
+      lines.push("  Suggested use cases:");
+      for (const useCase of inspection.llmUseCases) {
+        lines.push(`    - ${useCase}`);
+      }
+    }
+    if (inspection.llmCaveats?.length) {
+      lines.push("  Caveats:");
+      for (const caveat of inspection.llmCaveats) {
+        lines.push(`    - ${caveat}`);
+      }
+    }
+    lines.push("");
+  }
 
   lines.push(
     `Quality signals: quality=${inspection.quality ?? "n/a"} votes=${inspection.voteCount ?? "n/a"} downloads=${inspection.downloadCount ?? "n/a"} usability=${inspection.usabilityRating ?? "n/a"}`,

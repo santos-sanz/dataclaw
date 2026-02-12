@@ -15,6 +15,7 @@ import type { RankedKaggleDataset } from "../services/dataset-search-ranking.js"
 import { AskService } from "../services/ask-service.js";
 import { MarkdownMemoryService } from "../services/memory-service.js";
 import { ModelAgentService, parseTablesFlag, summarizeArtifacts, type BuildModelInput } from "../services/model-agent-service.js";
+import { SessionStateService } from "../services/session-state-service.js";
 import { renderDatasetDiscovery } from "./dataset-discovery-render.js";
 import { renderDatasetInspection } from "./dataset-inspect-render.js";
 import { renderRankedDatasetSearch } from "./dataset-search-render.js";
@@ -91,6 +92,7 @@ export function createProgram(cwd: string = process.cwd()): Command {
   const askService = new AskService(cwd);
   const memoryService = new MarkdownMemoryService(cwd);
   const modelAgentService = new ModelAgentService(cwd);
+  const sessionStateService = new SessionStateService(cwd);
 
   program
     .name("dataclaw")
@@ -107,6 +109,7 @@ export function createProgram(cwd: string = process.cwd()): Command {
     .description("Download Kaggle dataset, ingest into canonical DuckDB, and build manifest")
     .action(async (ownerSlug: string) => {
       const manifest = await datasetService.addDataset(ownerSlug);
+      sessionStateService.setDefaultDatasetId(manifest.id);
       console.log(`Dataset added: ${manifest.id}`);
       console.log(`Tables: ${manifest.tables.map((table) => table.name).join(", ") || "(none)"}`);
     });
@@ -127,7 +130,15 @@ export function createProgram(cwd: string = process.cwd()): Command {
     .option("--raw", "Print Kaggle CSV output as-is", false)
     .option("--pick", "Interactively pick a ranked dataset and install it", false)
     .action(async (query: string, opts: DatasetSearchCommandOptions) => {
-      await runDatasetSearchCommand(datasetService, query, opts);
+      await runDatasetSearchCommand({
+        searchRemoteDatasets: (value, fileType, page) => datasetService.searchRemoteDatasets(value, fileType, page),
+        searchRemoteDatasetsRanked: (value, fileType, page) => datasetService.searchRemoteDatasetsRanked(value, fileType, page),
+        addDataset: async (ownerSlug) => {
+          const manifest = await datasetService.addDataset(ownerSlug);
+          sessionStateService.setDefaultDatasetId(manifest.id);
+          return manifest;
+        },
+      }, query, opts);
     });
 
   datasetCommand
@@ -143,7 +154,15 @@ export function createProgram(cwd: string = process.cwd()): Command {
     .option("--page <number>", "Initial result page", "1")
     .option("--no-interactive", "Disable interactive navigation")
     .action(async (query: string | undefined, opts: DatasetDiscoverCommandOptions) => {
-      await runDatasetDiscoverCommand(datasetService, query ?? "", opts);
+      await runDatasetDiscoverCommand({
+        discoverRemoteDatasets: (discoveryOpts) => datasetService.discoverRemoteDatasets(discoveryOpts),
+        inspectRemoteDataset: (ref) => datasetService.inspectRemoteDataset(ref),
+        addDataset: async (ownerSlug) => {
+          const manifest = await datasetService.addDataset(ownerSlug);
+          sessionStateService.setDefaultDatasetId(manifest.id);
+          return manifest;
+        },
+      }, query ?? "", opts);
     });
 
   datasetCommand
@@ -175,14 +194,18 @@ export function createProgram(cwd: string = process.cwd()): Command {
     .option("--yolo", "Bypass approval gate", false)
     .action(async (opts: { dataset?: string; prompt?: string; yolo: boolean }) => {
       const globalOpts = program.opts<{ dataset?: string; prompt?: string; yolo?: boolean }>();
-      const dataset = opts.dataset ?? globalOpts.dataset;
       const prompt = opts.prompt ?? globalOpts.prompt;
+      const datasetInput = opts.dataset ?? globalOpts.dataset;
+      const resolvedDataset = resolveDefaultDatasetForExecution(datasetService, sessionStateService, datasetInput);
 
-      if (!dataset || !prompt) {
-        throw new Error("ask requires --dataset <datasetId> and --prompt <prompt>");
+      if (!resolvedDataset || !prompt) {
+        throw new Error(
+          "ask requires --prompt <prompt> and a dataset. Use --dataset <datasetId>, '/dataset <id>' in TUI, or 'dataset add <owner/slug>'.",
+        );
       }
 
-      const result = await askService.ask(dataset, prompt, Boolean(opts.yolo));
+      const result = await askService.ask(resolvedDataset, prompt, Boolean(opts.yolo));
+      sessionStateService.setDefaultDatasetId(datasetService.datasetIdFromAny(resolvedDataset));
       console.log(renderAskResult(result));
     });
 
@@ -258,10 +281,14 @@ export function createProgram(cwd: string = process.cwd()): Command {
     const opts = program.opts<{ prompt?: string; dataset?: string; json?: boolean; yolo?: boolean }>();
 
     if (opts.prompt) {
-      if (!opts.dataset) {
-        throw new Error("--dataset is required when using --prompt");
+      const resolvedDataset = resolveDefaultDatasetForExecution(datasetService, sessionStateService, opts.dataset);
+      if (!resolvedDataset) {
+        throw new Error(
+          "--prompt requires a dataset. Use --dataset <datasetId>, '/dataset <id>' in TUI, or 'dataset add <owner/slug>'.",
+        );
       }
-      const result = await askService.ask(opts.dataset, opts.prompt, Boolean(opts.yolo));
+      const result = await askService.ask(resolvedDataset, opts.prompt, Boolean(opts.yolo));
+      sessionStateService.setDefaultDatasetId(datasetService.datasetIdFromAny(resolvedDataset));
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
       } else {
@@ -270,27 +297,50 @@ export function createProgram(cwd: string = process.cwd()): Command {
       return;
     }
 
+    const persistedDefault = sessionStateService.resolveDefaultDatasetId(datasetService.listDatasets());
+    const interactiveDatasetContext: InteractiveDatasetCommandState = {
+      lastSearch: undefined,
+      currentSelection: undefined,
+    };
+    const bannerLines = [
+      "/model build --tables <t1,t2> to generate SQL model and TSX artifacts",
+      "/model web to launch the web dashboard for SQL-extracted data",
+      "/dataset search <query> to discover Kaggle datasets from TUI",
+    ];
+    if (persistedDefault.clearedInvalidDefault) {
+      bannerLines.push("Persisted default dataset was removed because it is no longer available locally.");
+    }
+
     await runInteractiveSession({
       onAsk: (prompt, options) => askService.ask(options.datasetId, prompt, options.yolo),
       onListDatasets: async () => datasetService.listDatasets(),
-      onCommand: async (command, context) =>
-        runInteractiveModelCommand({
+      onCommand: async (command, context) => {
+        const datasetHandled = await runInteractiveDatasetCommand({
+          command,
+          context,
+          datasetService,
+          sessionStateService,
+          state: interactiveDatasetContext,
+        });
+        if (datasetHandled) return true;
+
+        return runInteractiveModelCommand({
           command,
           context,
           cwd,
           datasetService,
           modelService: modelAgentService,
-        }),
+        });
+      },
     }, {
       compatibility: "auto",
-      bannerLines: [
-        "/model build --tables <t1,t2> to generate SQL model and TSX artifacts",
-        "/model web to launch the web dashboard for SQL-extracted data",
-      ],
+      initialDatasetId: persistedDefault.datasetId,
+      bannerLines,
       helpLines: [
         `/model help      ${"Show model command help"}`,
         `/model build ... ${"Build model from active dataset (or --dataset)"}`,
         `/model web ...   ${"Open model web app from active dataset (or --dataset)"}`,
+        `/dataset help    ${"Show dataset search commands in TUI"}`,
       ],
     });
   });
@@ -628,12 +678,269 @@ function parsePort(value: string): number {
   return parsed;
 }
 
+interface InteractiveDatasetCommandState {
+  lastSearch?: InteractiveDatasetSearchSnapshot;
+  currentSelection?: string;
+}
+
+interface InteractiveDatasetSearchSnapshot {
+  query: string;
+  page: number;
+  filters: DiscoverRemoteDatasetsOptions;
+  results: RankedKaggleDataset[];
+}
+
+interface InteractiveDatasetCommandInput {
+  command: string;
+  context: InteractiveCommandContext;
+  datasetService: Pick<
+    DatasetService,
+    "discoverRemoteDatasets" | "inspectRemoteDataset" | "addDataset" | "datasetIdFromAny" | "listDatasets"
+  >;
+  sessionStateService: Pick<SessionStateService, "setDefaultDatasetId">;
+  state: InteractiveDatasetCommandState;
+}
+
 interface InteractiveModelCommandInput {
   command: string;
   context: InteractiveCommandContext;
   cwd: string;
   datasetService: Pick<DatasetService, "datasetIdFromAny" | "getManifest">;
   modelService: ModelBuildService;
+}
+
+async function runInteractiveDatasetCommand(input: InteractiveDatasetCommandInput): Promise<boolean> {
+  const normalized = normalizeInteractiveDatasetInput(input.command);
+  if (!normalized) return false;
+
+  const tokens = tokenizeShellish(normalized);
+  const action = tokens[1]?.toLowerCase();
+
+  if (tokens.length === 1 || action === "help") {
+    input.context.writeLine(renderInteractiveDatasetHelp());
+    return true;
+  }
+
+  if (action === "search") {
+    const parsed = parseDatasetSearchInteractiveArgs(tokens.slice(2), input.state.lastSearch?.filters);
+    const discovered = await input.datasetService.discoverRemoteDatasets(parsed);
+    input.state.lastSearch = toInteractiveDatasetSearchSnapshot(discovered);
+    input.context.writeLine(renderDatasetDiscovery(discovered));
+    return true;
+  }
+
+  if (action === "next" || action === "prev") {
+    if (!input.state.lastSearch) {
+      input.context.writeLine("No active dataset search. Run '/dataset search <query>' first.");
+      return true;
+    }
+    const nextPage =
+      action === "next"
+        ? input.state.lastSearch.page + 1
+        : Math.max(1, input.state.lastSearch.page - 1);
+    const discovered = await input.datasetService.discoverRemoteDatasets({
+      ...input.state.lastSearch.filters,
+      query: input.state.lastSearch.query,
+      page: nextPage,
+    });
+    input.state.lastSearch = toInteractiveDatasetSearchSnapshot(discovered);
+    input.context.writeLine(renderDatasetDiscovery(discovered));
+    return true;
+  }
+
+  if (action === "filters") {
+    if (!input.state.lastSearch) {
+      input.context.writeLine("No active dataset search. Run '/dataset search <query>' first.");
+      return true;
+    }
+    input.context.writeLine(
+      renderActiveDiscoverFilters(
+        input.state.lastSearch.query,
+        input.state.lastSearch.page,
+        input.state.lastSearch.filters,
+      ),
+    );
+    return true;
+  }
+
+  if (action === "open") {
+    const value = tokens.slice(2).join(" ").trim();
+    if (!value) {
+      throw new Error("Usage: /dataset open <rank|owner/slug>");
+    }
+    const ref = resolveInteractiveDatasetRef(value, input.state.lastSearch?.results ?? []);
+    if (!ref) {
+      throw new Error(`Invalid dataset selection '${value}'.`);
+    }
+    input.state.currentSelection = ref;
+    await runDatasetInspectCommand(input.datasetService, ref, {
+      isTTY: input.context.isTTY,
+      writeLine: input.context.writeLine,
+      prompt: input.context.prompt,
+    });
+    return true;
+  }
+
+  if (action === "add") {
+    const value = tokens.slice(2).join(" ").trim();
+    if (!value) {
+      throw new Error("Usage: /dataset add <rank|owner/slug>");
+    }
+    const ref = resolveInteractiveDatasetRef(value, input.state.lastSearch?.results ?? []);
+    if (!ref) {
+      throw new Error(`Invalid dataset selection '${value}'.`);
+    }
+    const manifest = await input.datasetService.addDataset(ref);
+    input.context.setDatasetId(manifest.id);
+    input.sessionStateService.setDefaultDatasetId(manifest.id);
+    input.context.writeLine(`Dataset installed: ${manifest.id}`);
+    input.context.writeLine(`Tables: ${manifest.tables.map((table) => table.name).join(", ") || "(none)"}`);
+    input.context.writeLine(`Active dataset set to: ${manifest.id}`);
+    return true;
+  }
+
+  if (action && !action.startsWith("--")) {
+    const desired = input.datasetService.datasetIdFromAny(tokens.slice(1).join(" ").trim());
+    if (!desired) {
+      throw new Error("Usage: /dataset <id> or /dataset search <query>");
+    }
+    const existing = input.datasetService.listDatasets();
+    if (!existing.includes(desired)) {
+      throw new Error(`Dataset '${desired}' is not available locally. Use /datasets or /dataset add <rank|owner/slug>.`);
+    }
+    input.context.setDatasetId(desired);
+    input.sessionStateService.setDefaultDatasetId(desired);
+    input.context.writeLine(`Active dataset set to: ${desired}`);
+    return true;
+  }
+
+  throw new Error("Unknown /dataset command. Use '/dataset help'.");
+}
+
+export function normalizeInteractiveDatasetInput(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+
+  let candidate = trimmed;
+  if (candidate.startsWith("/")) {
+    candidate = candidate.slice(1).trim();
+  }
+  if (/^dataclaw\s+/i.test(candidate)) {
+    candidate = candidate.replace(/^dataclaw\s+/i, "").trim();
+  }
+
+  if (!/^dataset(?:\s|$)/i.test(candidate)) {
+    return null;
+  }
+
+  return candidate;
+}
+
+function parseDatasetSearchInteractiveArgs(
+  args: string[],
+  fallback?: DiscoverRemoteDatasetsOptions,
+): DiscoverRemoteDatasetsOptions {
+  const base: DiscoverRemoteDatasetsOptions = {
+    sortBy: fallback?.sortBy ?? "hottest",
+    fileType: fallback?.fileType ?? "all",
+    licenseName: fallback?.licenseName ?? "all",
+    tags: fallback?.tags,
+    user: fallback?.user,
+    minSize: fallback?.minSize,
+    maxSize: fallback?.maxSize,
+    query: fallback?.query ?? "",
+    page: fallback?.page ?? 1,
+  };
+
+  const queryParts: string[] = [];
+  let hasExplicitPage = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--sort-by") {
+      base.sortBy = readArgValue(args, token, index) as DiscoverRemoteDatasetsOptions["sortBy"];
+      index += 1;
+      continue;
+    }
+    if (token === "--file-type") {
+      base.fileType = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--license") {
+      base.licenseName = readArgValue(args, token, index) as DiscoverRemoteDatasetsOptions["licenseName"];
+      index += 1;
+      continue;
+    }
+    if (token === "--tags") {
+      base.tags = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--user") {
+      base.user = readArgValue(args, token, index);
+      index += 1;
+      continue;
+    }
+    if (token === "--min-size") {
+      base.minSize = parseOptionalNonNegativeInt("min-size", readArgValue(args, token, index));
+      index += 1;
+      continue;
+    }
+    if (token === "--max-size") {
+      base.maxSize = parseOptionalNonNegativeInt("max-size", readArgValue(args, token, index));
+      index += 1;
+      continue;
+    }
+    if (token === "--page") {
+      base.page = parsePositiveInt(readArgValue(args, token, index), 1);
+      hasExplicitPage = true;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--")) {
+      throw new Error(`Unknown flag '${token}' for /dataset search.`);
+    }
+    queryParts.push(token);
+  }
+
+  const query = queryParts.join(" ").trim();
+  base.query = query || base.query || "";
+  if (query && !hasExplicitPage) {
+    base.page = 1;
+  }
+
+  if (Number.isFinite(base.minSize) && Number.isFinite(base.maxSize) && (base.maxSize as number) < (base.minSize as number)) {
+    throw new Error("--max-size must be greater than or equal to --min-size.");
+  }
+
+  return base;
+}
+
+function resolveInteractiveDatasetRef(inputText: string, ranked: RankedKaggleDataset[]): string | null {
+  if (/^\d+$/.test(inputText)) {
+    const pick = resolveDatasetPickSelection(inputText, ranked);
+    return pick.kind === "selected" ? pick.dataset.ref : null;
+  }
+  if (inputText.includes("/")) return inputText;
+  const direct = ranked.find((dataset) => dataset.ref === inputText);
+  return direct?.ref ?? null;
+}
+
+function toInteractiveDatasetSearchSnapshot(result: RemoteDatasetDiscoveryResult): InteractiveDatasetSearchSnapshot {
+  return {
+    query: result.query,
+    page: result.page,
+    filters: {
+      sortBy: result.filters.sortBy as DiscoverRemoteDatasetsOptions["sortBy"],
+      fileType: result.filters.fileType,
+      licenseName: result.filters.licenseName as DiscoverRemoteDatasetsOptions["licenseName"],
+      tags: result.filters.tags,
+      user: result.filters.user,
+      minSize: result.filters.minSize,
+      maxSize: result.filters.maxSize,
+    },
+    results: result.results,
+  };
 }
 
 async function runInteractiveModelCommand(input: InteractiveModelCommandInput): Promise<boolean> {
@@ -847,6 +1154,31 @@ function renderInteractiveModelHelp(): string {
     "  /model web [--run-id <id>] [--port 4173] [--host 127.0.0.1]",
     "  /model ... commands use active dataset from /dataset unless --dataset is provided.",
   ].join("\n");
+}
+
+function renderInteractiveDatasetHelp(): string {
+  return [
+    "Dataset commands:",
+    "  /dataset <id>                                  Set active local dataset and persist as default",
+    "  /dataset search <query> [--file-type <type>]  Search Kaggle datasets",
+    "  /dataset search ... [--sort-by <value>] [--license <value>] [--tags <csv>] [--user <owner>]",
+    "  /dataset search ... [--min-size <bytes>] [--max-size <bytes>] [--page <number>]",
+    "  /dataset open <rank|owner/slug>               Inspect remote dataset details",
+    "  /dataset add <rank|owner/slug>                Install dataset, set active dataset, persist as default",
+    "  /dataset next | /dataset prev                 Navigate last search pagination",
+    "  /dataset filters                              Show active filters for last search",
+    "  /dataset help                                 Show this help",
+  ].join("\n");
+}
+
+function resolveDefaultDatasetForExecution(
+  datasetService: Pick<DatasetService, "listDatasets">,
+  sessionStateService: Pick<SessionStateService, "resolveDefaultDatasetId">,
+  explicitDataset?: string,
+): string | undefined {
+  if (explicitDataset?.trim()) return explicitDataset.trim();
+  const persisted = sessionStateService.resolveDefaultDatasetId(datasetService.listDatasets());
+  return persisted.datasetId;
 }
 
 function createDefaultDatasetSearchIo(): DatasetSearchIo {

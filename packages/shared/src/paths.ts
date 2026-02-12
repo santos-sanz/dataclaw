@@ -6,6 +6,7 @@ export interface ProjectPaths {
   projectRoot: string;
   stateRoot: string;
   datasetsRoot: string;
+  sessionStatePath: string;
   globalMemoryRoot: string;
   globalCuratedMemoryPath: string;
   auditLogPath: string;
@@ -15,6 +16,7 @@ export function getProjectPaths(cwd: string = process.cwd()): ProjectPaths {
   const projectRoot = resolve(cwd);
   const stateRoot = join(projectRoot, ".dataclaw");
   const datasetsRoot = join(stateRoot, "datasets");
+  const sessionStatePath = join(stateRoot, "session.json");
   const globalMemoryRoot = join(stateRoot, "memory", "global");
   const globalCuratedMemoryPath = join(projectRoot, "MEMORY.md");
   const auditLogPath = join(stateRoot, "logs", "audit.jsonl");
@@ -23,6 +25,7 @@ export function getProjectPaths(cwd: string = process.cwd()): ProjectPaths {
     projectRoot,
     stateRoot,
     datasetsRoot,
+    sessionStatePath,
     globalMemoryRoot,
     globalCuratedMemoryPath,
     auditLogPath,

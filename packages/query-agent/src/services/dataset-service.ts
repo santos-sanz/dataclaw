@@ -14,6 +14,7 @@ import {
   type RankedKaggleDataset,
   type RemoteDatasetMetadataSummary,
 } from "./dataset-search-ranking.js";
+import { DatasetLlmEnrichmentService } from "./dataset-llm-enrichment-service.js";
 import { KaggleService, type KaggleDatasetSearchOptions } from "./kaggle-service.js";
 
 export interface DiscoverRemoteDatasetsOptions extends KaggleDatasetSearchOptions {
@@ -26,6 +27,10 @@ export interface DiscoveredRemoteDataset extends RankedKaggleDataset {
   metadataSummary?: RemoteDatasetMetadataSummary;
   fileCount?: number;
   fileCountApproximate?: boolean;
+  llmSummary?: string;
+  llmUseCases?: string[];
+  llmCaveats?: string[];
+  llmRationale?: string;
 }
 
 export interface RemoteDatasetDiscoveryResult {
@@ -84,12 +89,17 @@ export interface RemoteDatasetInspection {
     truncated: boolean;
     nextPageToken?: string;
   };
+  llmSummary?: string;
+  llmUseCases?: string[];
+  llmCaveats?: string[];
+  llmRationale?: string;
 }
 
 export class DatasetService {
   constructor(
     private readonly cwd: string,
     private readonly kaggleService: KaggleService = new KaggleService(),
+    private readonly llmEnrichmentService: DatasetLlmEnrichmentService = new DatasetLlmEnrichmentService(),
   ) {
     ensureProjectDirectories(cwd);
   }
@@ -217,6 +227,60 @@ export class DatasetService {
       }
     });
 
+    const llm = await this.llmEnrichmentService.enrich(
+      query,
+      ranked.map((dataset) => ({
+        ref: dataset.ref,
+        title: dataset.title,
+        summary: dataset.summary,
+        description: dataset.metadataSummary?.descriptionSnippet,
+        formats: dataset.formats,
+        quality: dataset.quality,
+        voteCount: dataset.voteCount,
+        downloadCount: dataset.downloadCount,
+        usabilityRating: dataset.usabilityRating,
+        totalBytes: dataset.totalBytes,
+        fileCount: dataset.fileCount ?? null,
+        lastUpdated: dataset.lastUpdated,
+        tags: dataset.metadataSummary?.tags,
+        licenses: dataset.metadataSummary?.licenses,
+      })),
+    );
+
+    if (llm) {
+      const topLimit = Math.min(12, ranked.length);
+      const top = ranked.slice(0, topLimit);
+      const topByRef = new Map(top.map((dataset) => [dataset.ref, dataset]));
+      const orderedTop: DiscoveredRemoteDataset[] = [];
+      for (const ref of llm.rerankedRefs) {
+        const item = topByRef.get(ref);
+        if (!item) continue;
+        orderedTop.push(item);
+      }
+      for (const item of top) {
+        if (!orderedTop.includes(item)) {
+          orderedTop.push(item);
+        }
+      }
+      ranked.splice(0, topLimit, ...orderedTop);
+
+      for (const dataset of ranked) {
+        const insight = llm.insightsByRef[dataset.ref];
+        if (!insight) continue;
+        dataset.llmSummary = insight.llmSummary;
+        dataset.llmUseCases = insight.llmUseCases;
+        dataset.llmCaveats = insight.llmCaveats;
+        dataset.llmRationale = insight.llmRationale;
+        if (insight.llmSummary) {
+          dataset.summary = insight.llmSummary;
+        }
+      }
+    }
+
+    ranked.forEach((dataset, index) => {
+      dataset.rank = index + 1;
+    });
+
     return {
       query,
       page,
@@ -264,7 +328,7 @@ export class DatasetService {
     const fileBytes = filesWithFormat.reduce((sum, file) => sum + (file.totalBytes ?? 0), 0);
     const topFiles = [...filesWithFormat].sort((left, right) => (right.totalBytes ?? -1) - (left.totalBytes ?? -1)).slice(0, 10);
 
-    return {
+    const inspection: RemoteDatasetInspection = {
       ref,
       title: metadataDetail?.title ?? rankedMatch?.title ?? ref,
       subtitle: metadataDetail?.subtitle,
@@ -290,6 +354,34 @@ export class DatasetService {
         nextPageToken: allFiles.nextPageToken,
       },
     };
+
+    const llm = await this.llmEnrichmentService.enrich(ref, [
+      {
+        ref,
+        title: inspection.title,
+        summary: inspection.subtitle,
+        description: inspection.description,
+        tags: inspection.tags,
+        licenses: inspection.licenses,
+        formats: inspection.fileStats.byFormat.map((item) => item.format),
+        quality: inspection.quality ?? null,
+        voteCount: inspection.voteCount ?? null,
+        downloadCount: inspection.downloadCount ?? null,
+        usabilityRating: inspection.usabilityRating ?? null,
+        totalBytes: inspection.totalBytes,
+        fileCount: inspection.fileStats.totalFiles,
+        lastUpdated: inspection.lastUpdated,
+      },
+    ]);
+    const insights = llm?.insightsByRef[ref];
+    if (insights) {
+      inspection.llmSummary = insights.llmSummary;
+      inspection.llmUseCases = insights.llmUseCases;
+      inspection.llmCaveats = insights.llmCaveats;
+      inspection.llmRationale = insights.llmRationale;
+    }
+
+    return inspection;
   }
 }
 
